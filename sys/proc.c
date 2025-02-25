@@ -46,6 +46,7 @@
 # include "random.h"
 # include "xbios.h"
 
+// #define VBL 28
 #define THREAD_STACK_SIZE  (8 * 1024)    // 8 KB default stack
 #define GUARD_PAGE_SIZE    0             // Disabled for now
 // #define STACK_MAGIC        0xDEADBEEF    // Sentinel value for overflow detection
@@ -225,6 +226,8 @@ void wakeup(struct proc *p)
 /* Timer ISR: called every millisecond */
 void timer_interrupt_handler(void)
 {
+	if (!curproc || !ready_queue) return;
+	
 	timer_ticks++;
 	struct proc *p = curproc;
 
@@ -591,16 +594,22 @@ init_proc(void)
     // old_vbl = (void *)Setexc(VBL, (long)timer_interrupt_handler);
     // Jenabint(VBL);
 
-	// Set up timer for thread scheduling
-	proc_clock = time_slice;
-	old_timer = (void *)Setexc(0x100, (long)timer_interrupt_handler);
-	*((volatile unsigned short *)0x468L) = 20; // 50Hz
-
     rootproc->threads = kmalloc(sizeof(struct thread));
     rootproc->threads->tid = 0;
     rootproc->threads->stack = rootproc->stack; // Use main stack
     rootproc->num_threads = 1;
-    add_to_ready_queue(rootproc);	
+    rootproc->p_state = STATE_RUNNING;
+    rootproc->p_priority = 20; // Default priority
+    
+    /* Initialize ready queue */
+    ready_queue = rootproc;
+
+    add_to_ready_queue(rootproc);
+
+    // Set up timer for thread scheduling
+    proc_clock = time_slice;
+    old_timer = (void *)Setexc(0x100, (long)timer_interrupt_handler);
+    *((volatile unsigned short *)0x468L) = 20; // 50Hz
 }
 
 /* remaining_proc_time():
