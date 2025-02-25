@@ -55,4 +55,23 @@ ulong	_cdecl	remaining_proc_time (void);
 
 struct proc *_cdecl get_curproc(void);
 
+int tas(volatile long *lock);
+void switch_to_thread(struct proc *from, struct proc *to);
+void schedule(void);
+void add_to_wait_queue(struct proc **queue, struct proc *p);
+void remove_from_wait_queue(struct proc **queue, struct proc *p);
+void add_to_ready_queue(struct proc *p);
+void remove_from_ready_queue(struct proc *p);
+struct proc* remove_highest_priority(struct proc **queue);
+void th_sleep(void);
+void wakeup(struct proc *p);
+extern void timer_interrupt_handler(void);
+void* allocate_thread_stack(void);
+void free_thread_stack(void *stack);
+void mutex_lock(struct mutex *m);
+void mutex_unlock(struct mutex *m);
+void mutex_init(struct mutex *m);
+void semaphore_init(struct semaphore *s, int count);
+void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg);
+
 # endif /* _proc_h */

@@ -56,6 +56,7 @@ struct proc *
 fork_proc1 (struct proc *p1, long flags, long *err)
 {
 	struct proc *p2;
+	struct thread *t, *new_t;
 
 	p2 = kmalloc (sizeof (*p2));
 	if (!p2) goto nomem;
@@ -214,6 +215,38 @@ fork_proc1 (struct proc *p1, long flags, long *err)
 		spl (sr);
 	}
 
+	// Initialize thread structures
+	p2->threads = NULL;
+	p2->num_threads = 0;
+	
+	if (flags & FORK_SHAREVM) {
+		for (t = p1->threads; t != NULL; t = t->next) {
+			new_t = kmalloc(sizeof(struct thread));
+			if (!new_t) {
+				*err = ENOMEM;
+				goto nomem;
+			}
+			
+			*new_t = *t;
+			new_t->proc = p2;
+			new_t->next = p2->threads;
+			new_t->stack = t->stack;  // Share stack when sharing VM
+			p2->threads = new_t;
+			p2->num_threads++;
+		}
+	} else {
+		new_t = kmalloc(sizeof(struct thread));
+		if (!new_t) {
+			*err = ENOMEM;
+			goto nomem;
+		}
+		new_t->tid = 0;
+		new_t->proc = p2;
+		new_t->stack = p2->stack;
+		p2->threads = new_t;
+		p2->num_threads = 1;
+	}
+
 	return p2;
 
 nomem:
@@ -221,6 +254,12 @@ nomem:
 
 	if (p2)
 	{
+		t = p2->threads;
+		while (t) {
+			struct thread *next = t->next;
+			thread_cleanup(t);
+			t = next;
+		}
 		if (p2->p_mem) free_mem (p2);
 		if (p2->p_cred) { free_cred (p2->p_cred->ucr); kfree (p2->p_cred); }
 		if (p2->p_fd) free_fd (p2);

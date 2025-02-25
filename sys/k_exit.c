@@ -73,6 +73,22 @@ terminate(struct proc *pcurproc, short code, short que)
 	struct proc *p;
 	int i, wakemint = 0;
 
+	// Clean up threads before termination
+	struct thread *t = pcurproc->threads;
+	while (t) {
+		struct thread *next = t->next;
+		if (t->join_queue) {
+			wakeup((struct proc *)t->waiting_procs);
+		}
+		if (t->stack != pcurproc->stack) {  // Don't free main stack
+			free_thread_stack(t->stack);
+		}
+		kfree(t);
+		t = next;
+	}
+	pcurproc->threads = NULL;
+	pcurproc->num_threads = 0;	
+
 	/* notify proc extensions */
 	proc_ext_on_exit(pcurproc, code);
 

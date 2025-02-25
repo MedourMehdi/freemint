@@ -1633,3 +1633,102 @@ reent2_call_old:
 #endif
 	move.l	SYM(old_trap2),-(sp)
 	rts
+// Thread management syscalls
+
+#ifdef __mcoldfire__
+
+_sys_setpriority:
+        move.l  4(sp),d0
+        jsr     _sys_setpriority
+        rts
+
+_sys_yield:
+        jsr     _sys_yield
+        rts
+
+_sys_tls_create:
+        jsr     _sys_tls_create
+        rts
+
+_sys_tls_set:
+        lea     -8(sp),sp
+        move.l  12(sp),4(sp)    // value
+        move.l  16(sp),(sp)     // key
+        jsr     _sys_tls_set
+        lea     8(sp),sp
+        rts
+
+_sys_tls_get:
+        lea     -4(sp),sp
+        move.l  8(sp),(sp)      // key
+        jsr     _sys_tls_get
+        lea     4(sp),sp
+        rts
+
+_sys_create_thread:
+        lea     -12(sp),sp
+        move.l  24(sp),8(sp)    // stack
+        move.l  20(sp),4(sp)    // arg
+        move.l  16(sp),(sp)     // func
+        jsr     _sys_create_thread
+        lea     12(sp),sp
+        rts
+
+_sys_exit:
+        jsr     _sys_exit
+        rts
+
+_sys_thread_exists:
+        lea     -4(sp),sp
+        move.l  8(sp),(sp)      // tid
+        jsr     _sys_thread_exists
+        lea     4(sp),sp
+        rts
+
+#else
+
+_sys_setpriority:
+        move.l  4(sp),d0         // Get priority argument
+        jsr     _sys_setpriority
+        rts
+
+_sys_yield:
+        jsr     _sys_yield
+        rts
+
+_sys_tls_create:
+        jsr     _sys_tls_create
+        rts
+
+_sys_tls_set:
+        move.l  8(sp),-(sp)      // Push value argument
+        move.l  8(sp),-(sp)      // Push key argument
+        jsr     _sys_tls_set
+        addq.l  #8,sp           // Clean up stack
+        rts
+
+_sys_tls_get:
+        move.l  4(sp),-(sp)      // Push key argument
+        jsr     _sys_tls_get
+        addq.l  #4,sp           // Clean up stack
+        rts
+
+_sys_create_thread:
+        move.l  12(sp),-(sp)     // Push stack argument
+        move.l  12(sp),-(sp)     // Push arg argument
+        move.l  12(sp),-(sp)     // Push func argument
+        jsr     _sys_create_thread
+        lea     12(sp),sp       // Clean up stack
+        rts
+
+_sys_exit:
+        jsr     _sys_exit
+        rts
+
+_sys_thread_exists:
+        move.l  4(sp),-(sp)      // Push tid argument
+        jsr     _sys_thread_exists
+        addq.l  #4,sp           // Clean up stack
+        rts
+
+#endif

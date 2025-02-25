@@ -644,11 +644,28 @@ exec_region(struct proc *p, MEMREGION *mem, int thread)
 	BASEPAGE *b;
 	int i;
 	MEMREGION *m;
+	struct thread *t;
 
 	TRACE(("exec_region: enter (PROC %p, mem = %p)", p, mem));
 	assert(p && mem && fd);
 	assert(p->p_cwd);
 	assert(p->p_mem);
+
+	// Clean up existing threads if not a thread creation
+	if (!thread) {
+		t = p->threads;
+		while (t) {
+			struct thread *next = t->next;
+			if (t->tid != 0) {  // Preserve main thread
+				free_thread_stack(t->stack);
+				kfree(t);
+			}
+			t = next;
+		}
+		// Reset to single thread state
+		p->threads = p->threads;  // Keep main thread
+		p->num_threads = 1;
+	}
 
 	b = (BASEPAGE *)mem->loc;
 

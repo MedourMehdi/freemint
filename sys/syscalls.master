@@ -519,6 +519,15 @@ opcode	ret	class name	args */
 0x181		Fchdir		(short fd) /* since 1.17 */
 0x182		Ffdopendir	(short fd) /* since 1.17 */
 0x183		Fdirfd		(long handle) /* since 1.17 */
+0x184	long	setpriority	(long priority)
+0x185	void	yield	(void)
+0x186	long	tls_create	(void)
+0x187	long	tls_set	(long key, void *value)
+0x188	long	tls_get	(long key)
+0x189	long	create_thread	(void *func, void *arg, void *stack)
+0x18a	long	thread_join	(int tid, void **retval)
+0x18b	long	thread_detach	(int tid)
+0x18c	long	thread_cancel	(int tid)
 0x184		undefined
 0x185		undefined
 0x186		undefined

@@ -46,6 +46,9 @@
 # include "random.h"
 # include "xbios.h"
 
+#define THREAD_STACK_SIZE  (8 * 1024)    // 8 KB default stack
+#define GUARD_PAGE_SIZE    0             // Disabled for now
+// #define STACK_MAGIC        0xDEADBEEF    // Sentinel value for overflow detection
 
 /*
  * We initialize proc_clock to a very large value so that we don't have
@@ -55,16 +58,391 @@ unsigned short proc_clock = 0x7fff;
 
 struct proc_queue sysq[NUM_QUEUES] = { { NULL } };
 
+struct proc *ready_queue = NULL;
+
+static long tls_next_key = 0;
 
 /* global process variables */
 struct proc *proclist = NULL;		/* list of all active processes */
 struct proc *curproc  = NULL;	/* current process		*/
 struct proc *rootproc = NULL;		/* pid 0 -- MiNT itself		*/
 
+/* Timer handling */
+static void (*old_timer)(void);          /* Original timer handler */
+volatile unsigned long timer_ticks = 0;  // Global timer
+
 /* default; actual value comes from mint.cnf */
 short time_slice = 2;
 
 struct proc *_cdecl get_curproc(void) { return curproc; }
+
+int tas(volatile long *lock) {
+    int old_value;
+    asm volatile (
+        "tas.b %1\n\t"
+        "sne %0"
+        : "=d" (old_value), "+m" (*lock)
+        : 
+        : "cc"
+    );
+    return old_value;
+}
+
+// Assembly snippet to initialize a new thread's stack
+void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
+    unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
+    sp = (unsigned long*)((unsigned long)sp & ~1);  // Align to even address
+    *--sp = (unsigned long)arg;     // Argument
+    *--sp = (unsigned long)entry;   // PC
+    t->sp = sp;
+}
+
+/* Context switch assembly (m68k) */
+void switch_to_thread(struct proc *from, struct proc *to)
+{
+	#ifdef __mcoldfire__
+    asm volatile (
+        "lea -48(sp),sp\n\t"
+        "movem.l d2-d7/a2-a6,(sp)\n\t"
+        "move.l sp,%0\n\t"
+        "move.l %1,sp\n\t"
+        "movem.l (sp),d2-d7/a2-a6\n\t"
+        "lea 48(sp),sp"
+        : "=m" (from->p_save_sp)
+        : "m" (to->p_save_sp)
+        : "memory"
+    );
+#else
+	asm volatile (
+		 "movem.l  %%d2-%%d7/%%a2-%%a6, -(%%sp)\n\t"
+		 "move.l   %%sp, %0\n\t"
+		 "move.l   %1, %%sp\n\t"
+		 "movem.l  (%%sp)+, %%d2-%%d7/%%a2-%%a6\n\t"
+		 : "=m" (from->p_save_sp)
+		 : "m" (to->p_save_sp)
+		 : "memory"
+	);
+#endif
+}
+
+/* Process iteration macro */
+#define for_each_proc(p) for (p = proclist; p != NULL; p = p->p_next)
+
+void schedule(void)
+{
+	struct proc *p, *next = NULL;
+	int highest_pri = -1;
+
+	// Select highest-priority ready thread
+	for (p = ready_queue; p != NULL; p = p->p_next) {
+		if (p->p_priority > highest_pri) {
+			highest_pri = p->p_priority;
+			next = p;
+		}
+	}
+
+	if (next) {
+		curproc->p_time_quantum = 10; // Reset quantum (10 ms)
+		switch_to_thread(curproc, next);
+		curproc = next; // Update current process
+	}
+}
+
+// Add a thread to a mutex's wait queue (sorted by priority)
+void add_to_wait_queue(struct proc **queue, struct proc *p)
+{
+	struct proc **curr;
+	for (curr = queue; *curr; curr = &(*curr)->p_wnext) {
+		if (p->p_priority > (*curr)->p_priority) break;
+	}
+	p->p_wnext = *curr;
+	*curr = p;
+}
+
+/**
+ * Removes a thread from a wait queue.
+ */
+void remove_from_wait_queue(struct proc **queue, struct proc *p)
+{
+	if (!queue || !p) return;
+
+	struct proc **curr;
+	for (curr = queue; *curr != NULL; curr = &(*curr)->p_wnext) {
+		if (*curr == p) {
+			*curr = p->p_wnext;
+			p->p_wnext = NULL;
+			break;
+		}
+	}
+}
+
+void add_to_ready_queue(struct proc *p)
+{
+	// Insert into ready_queue sorted by priority
+	struct proc **curr;
+	for (curr = &ready_queue; *curr; curr = &(*curr)->p_next) {
+		if (p->p_priority > (*curr)->p_priority) break;
+	}
+	p->p_next = *curr;
+	*curr = p;
+}
+
+void remove_from_ready_queue(struct proc *p)
+{
+	struct proc **curr;
+	for (curr = &ready_queue; *curr; curr = &(*curr)->p_next) {
+		if (*curr == p) {
+			*curr = p->p_next;
+			p->p_next = NULL;
+			break;
+		}
+	}
+}
+
+// Remove the highest-priority thread from a wait queue
+struct proc* remove_highest_priority(struct proc **queue)
+{
+	struct proc *highest = *queue;
+	if (highest) *queue = highest->p_wnext;
+	return highest;
+}
+
+void th_sleep(void)
+{
+	curproc->p_state = STATE_BLOCKED;
+	curproc->p_block_time = timer_ticks;
+	remove_from_ready_queue(curproc);
+	schedule();
+}
+
+void wakeup(struct proc *p)
+{
+	remove_from_wait_queue((struct proc **)&p->p_blocked_on, p);
+	add_to_ready_queue(p);
+	p->p_state = STATE_RUNNING;
+}
+
+/* Timer ISR: called every millisecond */
+void timer_interrupt_handler(void)
+{
+	timer_ticks++;
+	struct proc *p = curproc;
+
+	if (p->p_time_quantum > 0) p->p_time_quantum--;
+	if (p->p_time_quantum == 0 || (p->p_flags & PF_YIELD)) {
+		p->p_flags &= ~PF_YIELD;
+		schedule();
+	}
+}
+
+/* Mutex functions */
+void mutex_lock(struct mutex *m)
+{
+	while (tas(&m->locked)) {
+		add_to_wait_queue(&m->wait_queue, curproc);
+		th_sleep();
+	}
+	m->owner = curproc;
+}
+
+void mutex_unlock(struct mutex *m)
+{
+	m->locked = 0;
+	m->owner = NULL;
+	struct proc *next = remove_highest_priority(&m->wait_queue);
+	if (next) wakeup(next);
+}
+
+/* Thread stack management */
+void* allocate_thread_stack(void)
+{
+	void *stack = kmalloc(THREAD_STACK_SIZE + GUARD_PAGE_SIZE);
+	if (!stack) return NULL;
+
+	unsigned long *stack_top = (unsigned long *)((char*)stack + GUARD_PAGE_SIZE + THREAD_STACK_SIZE - 4);
+	*stack_top = STACK_MAGIC; // Sentinel
+	return (char*)stack + GUARD_PAGE_SIZE;
+}
+
+void free_thread_stack(void *stack)
+{
+	if (stack) {
+		void *base = (char*)stack - GUARD_PAGE_SIZE;
+		kfree(base);
+	}
+}
+
+void mutex_init(struct mutex *m) {
+    m->locked = 0;
+    m->owner = NULL;
+    m->wait_queue = NULL;
+}
+
+void semaphore_init(struct semaphore *s, int count) {
+    s->count = count;
+    s->wait_queue = NULL;
+}
+
+long sys_tls_create(void) {
+    if (tls_next_key >= THREAD_TLS_KEYS) return -ENOMEM;
+    return tls_next_key++;
+}
+
+long sys_tls_set(long key, void *value) {
+    if (key < 0 || key >= THREAD_TLS_KEYS) return -EINVAL;
+    curproc->threads->tls[key] = value;
+    return 0;
+}
+
+long sys_tls_get(long key) {
+    if (key < 0 || key >= THREAD_TLS_KEYS) return -EINVAL;
+    return (long)curproc->threads->tls[key];
+}
+
+long sys_create_thread(void (*func)(void*), void *arg, void *stack) {
+    struct proc *p = curproc;
+    struct thread *t = kmalloc(sizeof(struct thread));
+
+	if (!func || !stack) return -EINVAL;
+
+    if (!t) return -ENOMEM;
+
+    t->stack = stack ? stack : allocate_thread_stack();
+    if (!t->stack) {
+        kfree(t);
+        return -ENOMEM;
+    }
+
+    // Initialize thread context
+    t->tid = p->num_threads++;
+    t->proc = p;
+    t->priority = p->p_priority;
+    t->next = p->threads;
+    p->threads = t;
+
+    // // Set up initial stack frame (m68k-specific)
+    // unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE - 4);
+    // *--sp = (unsigned long)arg;       // Argument
+    // *--sp = (unsigned long)func;      // PC (start execution here)
+    // t->sp = sp;                  // Saved SP
+
+    // Initialize thread stack
+    init_thread_stack(t, func, arg);
+
+    add_to_ready_queue(p);
+    return t->tid;
+}
+
+/* Syscalls */
+long sys_setpriority(long priority)
+{
+	struct proc *p = curproc;
+	if (priority < 0 || priority > 31) return -EINVAL;
+	p->p_priority = priority;
+	return 0;
+}
+
+long sys_yield(void)
+{
+	curproc->p_flags |= PF_YIELD;
+	schedule();
+	return 0;
+}
+
+long sys_exit(void) {
+    struct proc *p = curproc;
+    struct thread *t = p->threads;
+
+    // Remove all threads
+    while (t) {
+        struct thread *next = t->next;
+        free_thread_stack(t->stack);
+        kfree(t);
+        t = next;
+    }
+
+    // If last thread, terminate process
+    if (p->num_threads == 0) {
+        remove_from_ready_queue(p);
+        kfree(p);
+    }
+
+    schedule();
+    return 0;
+}
+
+long sys_thread_join(int tid, void **retval) {
+    struct proc *p = curproc;
+    struct thread *t = p->threads;
+    
+    // Find thread by tid
+    while (t && t->tid != tid) {
+        t = t->next;
+    }
+    
+    if (!t || t->thread_flags & THREAD_DETACHED) {
+        return -EINVAL;
+    }
+    
+    // Add current process to thread's wait queue
+    add_to_wait_queue(&t->waiting_procs, curproc);
+    curproc->p_blocked_on = t;
+    th_sleep();
+    
+    if (retval) {
+        *retval = (void*)(long)t->exit_code;
+    }
+    
+    thread_cleanup(t);
+    return 0;
+}
+
+long sys_thread_detach(int tid) {
+    struct proc *p = curproc;
+    struct thread *t = p->threads;
+    
+    while (t && t->tid != tid) {
+        t = t->next;
+    }
+    
+    if (!t) {
+        return -EINVAL;
+    }
+    
+    t->thread_flags |= THREAD_DETACHED;
+    return 0;
+}
+
+long sys_thread_cancel(int tid) {
+    struct proc *p = curproc;
+    struct thread *t = p->threads;
+    
+    while (t && t->tid != tid) {
+        t = t->next;
+    }
+    
+    if (!t) {
+        return -EINVAL;
+    }
+    
+    t->thread_flags |= THREAD_CANCELLED;
+    wakeup(t->proc);
+    return 0;
+}
+
+void thread_cleanup(struct thread *t) {
+    if (!t) return;
+    
+    // Wake up all waiting processes
+    struct proc *waiting;
+    while ((waiting = remove_highest_priority(&t->waiting_procs))) {
+        waiting->p_blocked_on = NULL;
+        wakeup(waiting);
+    }
+    
+    free_thread_stack(t->stack);
+    kfree(t);
+}
 
 
 /*
@@ -207,6 +585,22 @@ init_proc(void)
 		rootproc->p_fd->bconmap = 1;
 	rootproc->logbase = (void *) TRAP_Logbase();
 	rootproc->criticerr = *((long _cdecl (**)(long)) 0x404L);
+
+    // // Register timer handler with existing interrupt system
+    // Jdisint(VBL);
+    // old_vbl = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+    // Jenabint(VBL);
+
+	// Set up timer for thread scheduling
+	proc_clock = time_slice;
+	old_timer = (void *)Setexc(0x100, (long)timer_interrupt_handler);
+	*((volatile unsigned short *)0x468L) = 20; // 50Hz
+
+    rootproc->threads = kmalloc(sizeof(struct thread));
+    rootproc->threads->tid = 0;
+    rootproc->threads->stack = rootproc->stack; // Use main stack
+    rootproc->num_threads = 1;
+    add_to_ready_queue(rootproc);	
 }
 
 /* remaining_proc_time():

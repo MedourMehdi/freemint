@@ -283,11 +283,96 @@ struct proc
 	ushort	exception_mmusr;	/* result from ptest insn	*/
 	ushort	exception_access;	/* cause of the bus error (read, write, read/write) */
 
-
 	ulong	stack_magic;		/* to detect stack overflows	*/
 	char	stack[STKSIZE+4];	/* stack for system calls	*/
+    struct thread *threads;      // Thread list
+    int num_threads;             // Thread count
+    short p_priority;            // Base priority
+    void *p_save_sp;             // Saved stack pointer (context switch)
+    long p_block_time;           // Timestamp when blocked
+    void *p_blocked_on;          // Resource causing block (e.g., mutex*)
+    short p_state;               // Process state (RUNNING/BLOCKED)
+    ushort p_flags;              // Process flags (PF_YIELD etc.)
+    unsigned char p_kernel;      // 1 = kernel thread
+
+	short p_time_quantum;        // Time quantum for scheduling
+
+    // Queue pointers
+    struct proc *p_next;         // Next process in the ready queue
+    struct proc *p_wnext;        // Next process in a wait queue (mutex/semaphore)
 };
 
+/* Process states */
+#define STATE_RUNNING   0
+#define STATE_BLOCKED   1
+
+/* Process flags */
+#define PF_YIELD        0x0001  // Yield requested
+#define PF_KTHREAD      0x0002  // Kernel thread
+
+#define DEADLOCK_TIMEOUT 5000   // 5 seconds
+
+/* Thread Control Block (TCB) */
+#define THREAD_TLS_KEYS 32
+
+struct thread {
+    int tid;                     // Thread ID
+    void *sp;                    // Stack pointer
+    void *pc;                    // Program counter
+    struct proc *proc;           // Parent process
+    struct thread *next;         // Next thread in list
+    void *stack;                 // Stack base address
+    short priority;              // Priority (0-31)
+    void *tls[THREAD_TLS_KEYS];  // Thread-local storage
+    void **tls_ptr;              // Pointer to TLS array (for assembly)
+
+	unsigned long thread_flags;   // Thread-specific flags
+	void *cleanup_handler;       // Thread cleanup handler
+	int exit_code;              // Thread exit status
+	struct thread *join_queue;   // Threads waiting to join
+	struct proc *waiting_procs;   // List of processes waiting on this thread
+};
+
+/* Thread flags */
+#define THREAD_DETACHED    0x0001
+#define THREAD_CANCELLED   0x0002
+
+struct semaphore {
+    int count;
+    struct proc *wait_queue;
+};
+
+struct mutex {
+    volatile long locked;
+    struct proc *owner;
+    struct proc *wait_queue;     // Priority-sorted
+};
+
+/* Syscall numbers */
+#define SYS_setpriority   0x184
+#define SYS_yield         0x185
+#define SYS_tls_create    0x186
+#define SYS_tls_set       0x187
+#define SYS_tls_get       0x188
+#define SYS_create_thread 0x189
+#define SYS_thread_join   0x18a
+#define SYS_thread_detach 0x18b
+#define SYS_thread_cancel 0x18c
+
+/* Threads function prototypes */
+long sys_setpriority(long priority);
+long sys_yield(void);
+long sys_tls_create(void);
+long sys_tls_set(long key, void *value);
+long sys_tls_get(long key);
+long sys_create_thread(void (*func)(void*), void *arg, void *stack);
+long sys_exit(void);
+
+/* ToDo */
+long sys_thread_join(int tid, void **retval);
+long sys_thread_detach(int tid);
+long sys_thread_cancel(int tid);
+void thread_cleanup(struct thread *t);
 
 /*
  * our process queues
@@ -312,6 +397,7 @@ extern PROC *curproc;			/* current process		*/
 extern PROC *rootproc;			/* pid 0 -- MiNT itself		*/
 
 # endif
+
 
 
 # endif /* _mint_proc_h */
