@@ -216,35 +216,34 @@ fork_proc1 (struct proc *p1, long flags, long *err)
 	}
 
 	// Initialize thread structures
+	/* Initialize thread-related fields */
 	p2->threads = NULL;
 	p2->num_threads = 0;
+	p2->p_state = 0;
+	p2->p_priority = 0;
+	p2->p_time_quantum = 0;
+	p2->p_flags = 0;
 	
-	if (flags & FORK_SHAREVM) {
-		for (t = p1->threads; t != NULL; t = t->next) {
-			new_t = kmalloc(sizeof(struct thread));
-			if (!new_t) {
-				*err = ENOMEM;
-				goto nomem;
+	if (p1->threads) {
+		// Only copy thread structures if source process has threads
+		if (flags & FORK_SHAREVM) {
+			for (t = p1->threads; t != NULL; t = t->next) {
+				new_t = kmalloc(sizeof(struct thread));
+				*new_t = *t;
+				new_t->proc = p2;
+				new_t->next = p2->threads;
+				new_t->stack = t->stack;
+				p2->threads = new_t;
+				p2->num_threads++;
 			}
-			
-			*new_t = *t;
+		} else {
+			new_t = kmalloc(sizeof(struct thread));
+			new_t->tid = 0;
 			new_t->proc = p2;
-			new_t->next = p2->threads;
-			new_t->stack = t->stack;  // Share stack when sharing VM
+			new_t->stack = p2->stack;
 			p2->threads = new_t;
-			p2->num_threads++;
+			p2->num_threads = 1;
 		}
-	} else {
-		new_t = kmalloc(sizeof(struct thread));
-		if (!new_t) {
-			*err = ENOMEM;
-			goto nomem;
-		}
-		new_t->tid = 0;
-		new_t->proc = p2;
-		new_t->stack = p2->stack;
-		p2->threads = new_t;
-		p2->num_threads = 1;
 	}
 
 	return p2;

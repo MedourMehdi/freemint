@@ -46,7 +46,7 @@
 # include "random.h"
 # include "xbios.h"
 
-// #define VBL 28
+#define VBL 28
 #define THREAD_STACK_SIZE  (8 * 1024)    // 8 KB default stack
 #define GUARD_PAGE_SIZE    0             // Disabled for now
 // #define STACK_MAGIC        0xDEADBEEF    // Sentinel value for overflow detection
@@ -76,6 +76,8 @@ volatile unsigned long timer_ticks = 0;  // Global timer
 short time_slice = 2;
 
 struct proc *_cdecl get_curproc(void) { return curproc; }
+
+static int timer_initialized = 0;
 
 int tas(volatile long *lock) {
     int old_value;
@@ -226,9 +228,10 @@ void wakeup(struct proc *p)
 /* Timer ISR: called every millisecond */
 void timer_interrupt_handler(void)
 {
-	if (!curproc || !ready_queue) return;
-	
 	timer_ticks++;
+
+	if (!curproc || !curproc->threads) return;
+
 	struct proc *p = curproc;
 
 	if (p->p_time_quantum > 0) p->p_time_quantum--;
@@ -302,39 +305,80 @@ long sys_tls_get(long key) {
     return (long)curproc->threads->tls[key];
 }
 
-long sys_create_thread(void (*func)(void*), void *arg, void *stack) {
+long sys_create_thread(void (*func)(void*), void *arg, void *stack) 
+{
     struct proc *p = curproc;
-    struct thread *t = kmalloc(sizeof(struct thread));
 
-	if (!func || !stack) return -EINVAL;
+	Debug("sys_create_thread: func=%p arg=%p stack=%p", func, arg, stack);
 
-    if (!t) return -ENOMEM;
-
-    t->stack = stack ? stack : allocate_thread_stack();
-    if (!t->stack) {
-        kfree(t);
-        return -ENOMEM;
+    // First thread for this process
+    if (!p->threads) {
+        // Initialize thread subsystem
+        if (!timer_initialized) {
+            Jdisint(VBL);
+            old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+            Jenabint(VBL);
+            timer_initialized = 1;
+        }
+        
+        // Create main thread
+        p->threads = kmalloc(sizeof(struct thread));
+        p->threads->tid = 0;
+        p->threads->stack = p->stack;
+        p->threads->next = NULL;
+        p->num_threads = 1;
+        p->p_state = STATE_RUNNING;
+        p->p_priority = 20;
+        ready_queue = p;
+        add_to_ready_queue(p);
     }
-
-    // Initialize thread context
+    
+    // Create new thread
+    struct thread *t = kmalloc(sizeof(struct thread));
+    t->stack = stack ? stack : allocate_thread_stack();
     t->tid = p->num_threads++;
     t->proc = p;
     t->priority = p->p_priority;
     t->next = p->threads;
     p->threads = t;
-
-    // // Set up initial stack frame (m68k-specific)
-    // unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE - 4);
-    // *--sp = (unsigned long)arg;       // Argument
-    // *--sp = (unsigned long)func;      // PC (start execution here)
-    // t->sp = sp;                  // Saved SP
-
-    // Initialize thread stack
+    
     init_thread_stack(t, func, arg);
-
-    add_to_ready_queue(p);
     return t->tid;
 }
+
+// long sys_create_thread(void (*func)(void*), void *arg, void *stack) {
+//     struct proc *p = curproc;
+//     struct thread *t = kmalloc(sizeof(struct thread));
+
+// 	if (!func || !stack) return -EINVAL;
+
+//     if (!t) return -ENOMEM;
+
+//     t->stack = stack ? stack : allocate_thread_stack();
+//     if (!t->stack) {
+//         kfree(t);
+//         return -ENOMEM;
+//     }
+
+//     // Initialize thread context
+//     t->tid = p->num_threads++;
+//     t->proc = p;
+//     t->priority = p->p_priority;
+//     t->next = p->threads;
+//     p->threads = t;
+
+//     // // Set up initial stack frame (m68k-specific)
+//     // unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE - 4);
+//     // *--sp = (unsigned long)arg;       // Argument
+//     // *--sp = (unsigned long)func;      // PC (start execution here)
+//     // t->sp = sp;                  // Saved SP
+
+//     // Initialize thread stack
+//     init_thread_stack(t, func, arg);
+
+//     add_to_ready_queue(p);
+//     return t->tid;
+// }
 
 /* Syscalls */
 long sys_setpriority(long priority)
@@ -434,7 +478,7 @@ long sys_thread_cancel(int tid) {
 }
 
 void thread_cleanup(struct thread *t) {
-    if (!t) return;
+    if (!t || !t->proc->threads) return;
     
     // Wake up all waiting processes
     struct proc *waiting;
@@ -589,27 +633,35 @@ init_proc(void)
 	rootproc->logbase = (void *) TRAP_Logbase();
 	rootproc->criticerr = *((long _cdecl (**)(long)) 0x404L);
 
-    // // Register timer handler with existing interrupt system
-    // Jdisint(VBL);
-    // old_vbl = (void *)Setexc(VBL, (long)timer_interrupt_handler);
-    // Jenabint(VBL);
+    rootproc->threads = NULL;
+    rootproc->num_threads = 0;
+    rootproc->p_state = 0;
+    rootproc->p_priority = 0;
+    rootproc->p_time_quantum = 0;
+    rootproc->p_flags = 0;
 
-    rootproc->threads = kmalloc(sizeof(struct thread));
-    rootproc->threads->tid = 0;
-    rootproc->threads->stack = rootproc->stack; // Use main stack
-    rootproc->num_threads = 1;
-    rootproc->p_state = STATE_RUNNING;
-    rootproc->p_priority = 20; // Default priority
+    // rootproc->threads = kmalloc(sizeof(struct thread));
+    // rootproc->threads->tid = 0;
+    // rootproc->threads->stack = rootproc->stack; // Use main stack
+    // rootproc->num_threads = 1;
+    // rootproc->p_state = STATE_RUNNING;
+    // rootproc->p_priority = 20; // Default priority
     
-    /* Initialize ready queue */
-    ready_queue = rootproc;
+    // /* Initialize ready queue */
+    // ready_queue = rootproc;
 
-    add_to_ready_queue(rootproc);
+    // add_to_ready_queue(rootproc);
 
     // Set up timer for thread scheduling
-    proc_clock = time_slice;
-    old_timer = (void *)Setexc(0x100, (long)timer_interrupt_handler);
-    *((volatile unsigned short *)0x468L) = 20; // 50Hz
+    // proc_clock = time_slice;
+    // old_timer = (void *)Setexc(0x100, (long)timer_interrupt_handler);
+    // *((volatile unsigned short *)0x468L) = 20; // 50Hz
+//         if (!timer_active) {
+//             Jdisint(VBL);
+//             old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+//             Jenabint(VBL);
+//             timer_active = 1;
+//         }	
 }
 
 /* remaining_proc_time():

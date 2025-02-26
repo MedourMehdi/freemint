@@ -74,18 +74,22 @@ terminate(struct proc *pcurproc, short code, short que)
 	int i, wakemint = 0;
 
 	// Clean up threads before termination
-	struct thread *t = pcurproc->threads;
-	while (t) {
-		struct thread *next = t->next;
-		if (t->join_queue) {
-			wakeup((struct proc *)t->waiting_procs);
+	if (pcurproc->threads) {
+		// Only cleanup threads if process was using them
+		struct thread *t = pcurproc->threads;
+		while (t) {
+			struct thread *next = t->next;
+			if (t->join_queue) {
+				wakeup((struct proc *)t->waiting_procs);
+			}
+			if (t->stack != pcurproc->stack) {
+				free_thread_stack(t->stack);
+			}
+			kfree(t);
+			t = next;
 		}
-		if (t->stack != pcurproc->stack) {  // Don't free main stack
-			free_thread_stack(t->stack);
-		}
-		kfree(t);
-		t = next;
 	}
+	
 	pcurproc->threads = NULL;
 	pcurproc->num_threads = 0;	
 
