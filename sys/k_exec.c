@@ -673,6 +673,7 @@ exec_region(struct proc *p, MEMREGION *mem, int thread)
 		while (t) {
 			struct thread *next = t->next;
 			if (t->tid != 0) {  // Preserve main thread
+				DEBUG_TO_FILE("In exec_region (k_exec.c, t->tid != 0) -> Before Calling free_thread_stack for thread %d\n", t->tid);
 				free_thread_stack(t->stack);
 				kfree(t);
 			}

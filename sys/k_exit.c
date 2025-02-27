@@ -78,11 +78,13 @@ terminate(struct proc *pcurproc, short code, short que)
 		// Only cleanup threads if process was using them
 		struct thread *t = pcurproc->threads;
 		while (t) {
+			DEBUG_TO_FILE("In terminate() (k_exit.c) -> Terminating thread %d\n", t->tid);
 			struct thread *next = t->next;
 			if (t->join_queue) {
 				wakeup((struct proc *)t->waiting_procs);
 			}
 			if (t->stack != pcurproc->stack) {
+				DEBUG_TO_FILE("In terminate() (k_exit.c, t->stack != pcurproc->stack) -> Before Calling free_thread_stack for thread %d\n", t->tid);
 				free_thread_stack(t->stack);
 			}
 			kfree(t);

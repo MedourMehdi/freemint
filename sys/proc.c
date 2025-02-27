@@ -147,26 +147,43 @@ void exit_thread(void) {
 
 void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
     DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
-		entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
-    unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
-    sp = (unsigned long*)((unsigned long)sp & ~1);
-    
-    // Simulate a function call: entry(arg) -> exit_thread()
-    *--sp = (unsigned long)exit_thread;  // Return address after entry() completes
-    *--sp = (unsigned long)arg;          // Argument
-    *--sp = 0;                           // Dummy frame pointer
-    
-    t->ctxt.pc = (long)entry;            // Start execution at entry()
-    t->ctxt.sr = 0x0000;                 // User mode
-	// t->ctxt.sr = 0x2000;                 // Supervisor mode (temporarily)
-    t->ctxt.usp = (long)sp;              // User stack pointer
-    t->ctxt.ssp = (long)(t->proc->stack + ISTKSIZE); // Supervisor stack
-    t->sp = sp;
-    DEBUG_TO_FILE("Thread %d stack: PC=0x%lx, SP=0x%lx, ARG=0x%lx", 
-		t->tid, t->ctxt.pc, t->ctxt.usp, arg);
-    DEBUG_TO_FILE("Stack initialized: sp=%p pc=%lx (arg=%p)",
-		sp, t->ctxt.pc, arg);
+	entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
+	unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
+	sp = (unsigned long*)((unsigned long)sp & ~1);
+
+	*--sp = (unsigned long)exit_thread;  // Return to exit_thread after entry()
+	
+	// Set argument in D0 (m68k C calling convention)
+	t->ctxt.regs[0] = (unsigned long)arg; // D0 = arg
+	t->ctxt.pc = (long)entry;            // Start execution at entry()
+	t->ctxt.sr = 0x0000;                 // User mode
+
+	DEBUG_TO_FILE("Thread %d: D0=0x%lx, PC=0x%lx", 
+				t->tid, t->ctxt.regs[0], t->ctxt.pc);
 }
+
+// void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
+//     DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
+// 		entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
+//     unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
+//     sp = (unsigned long*)((unsigned long)sp & ~1);
+    
+//     // Simulate a function call: entry(arg) -> exit_thread()
+//     *--sp = (unsigned long)exit_thread;  // Return address after entry() completes
+//     *--sp = (unsigned long)arg;          // Argument
+//     *--sp = 0;                           // Dummy frame pointer
+    
+//     t->ctxt.pc = (long)entry;            // Start execution at entry()
+//     t->ctxt.sr = 0x0000;                 // User mode
+// 	// t->ctxt.sr = 0x2000;                 // Supervisor mode (temporarily)
+//     t->ctxt.usp = (long)sp;              // User stack pointer
+//     t->ctxt.ssp = (long)(t->proc->stack + ISTKSIZE); // Supervisor stack
+//     t->sp = sp;
+//     DEBUG_TO_FILE("Thread %d stack: PC=0x%lx, SP=0x%lx, ARG=0x%lx", 
+// 		t->tid, t->ctxt.pc, t->ctxt.usp, arg);
+//     DEBUG_TO_FILE("Stack initialized: sp=%p pc=%lx (arg=%p)",
+// 		sp, t->ctxt.pc, arg);
+// }
 
 void switch_to_thread(struct proc *from, struct proc *to) {
     // Allow 'from' to be NULL for initial switch
@@ -178,7 +195,8 @@ void switch_to_thread(struct proc *from, struct proc *to) {
     DEBUG_TO_FILE("Context switch: thread %d -> %d", 
             from ? from->current_thread->tid : -1, 
             to->current_thread->tid);
-
+	DEBUG_TO_FILE("Switching to thread %d: A0=0x%lx", 
+		to->current_thread->tid, to->current_thread->ctxt.regs[8]);
 	DEBUG_TO_FILE("Switching to thread %d: PC=0x%lx, SP=0x%lx, SR=0x%x", 
 		to->current_thread->tid, 
 		to->current_thread->ctxt.pc,
@@ -644,6 +662,7 @@ long sys_exit(void) {
     }
 
     // Free thread resources
+	DEBUG_TO_FILE("In sys_exit -> Before Calling free_thread_stack\n", current->tid);
     free_thread_stack(current->stack);
     kfree(current);
     p->num_threads--;
@@ -727,7 +746,7 @@ void thread_cleanup(struct thread *t) {
     while ((waiting = (struct proc *)remove_highest_priority((struct thread **)&t->waiting_procs))) {
         wakeup(waiting);
     }
-    
+	DEBUG_TO_FILE("In thread_cleanup -> Before Calling free_thread_stack for thread %d\n", t->tid);
     free_thread_stack(t->stack);
     kfree(t);
 }
