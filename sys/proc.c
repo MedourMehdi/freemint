@@ -146,7 +146,8 @@ void exit_thread(void) {
 }
 
 void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
-    DEBUG_TO_FILE("init_thread_stack: thread %d entry %p arg %p", t->tid, entry, arg);
+    DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
+		entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
     unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
     sp = (unsigned long*)((unsigned long)sp & ~1);
     
@@ -157,10 +158,14 @@ void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
     
     t->ctxt.pc = (long)entry;            // Start execution at entry()
     t->ctxt.sr = 0x0000;                 // User mode
+	// t->ctxt.sr = 0x2000;                 // Supervisor mode (temporarily)
     t->ctxt.usp = (long)sp;              // User stack pointer
     t->ctxt.ssp = (long)(t->proc->stack + ISTKSIZE); // Supervisor stack
     t->sp = sp;
-    DEBUG_TO_FILE("Stack initialized: sp=%p pc=%lx (arg=%p)", sp, t->ctxt.pc, arg);
+    DEBUG_TO_FILE("Thread %d stack: PC=0x%lx, SP=0x%lx, ARG=0x%lx", 
+		t->tid, t->ctxt.pc, t->ctxt.usp, arg);
+    DEBUG_TO_FILE("Stack initialized: sp=%p pc=%lx (arg=%p)",
+		sp, t->ctxt.pc, arg);
 }
 
 void switch_to_thread(struct proc *from, struct proc *to) {
@@ -173,6 +178,12 @@ void switch_to_thread(struct proc *from, struct proc *to) {
     DEBUG_TO_FILE("Context switch: thread %d -> %d", 
             from ? from->current_thread->tid : -1, 
             to->current_thread->tid);
+
+	DEBUG_TO_FILE("Switching to thread %d: PC=0x%lx, SP=0x%lx, SR=0x%x", 
+		to->current_thread->tid, 
+		to->current_thread->ctxt.pc,
+		to->current_thread->ctxt.usp,
+		to->current_thread->ctxt.sr);
 
     if (from) {
         if (custom_save_context(&from->current_thread->ctxt)) {
@@ -218,53 +229,55 @@ void schedule(void) {
     struct thread *highest = NULL;
     struct thread *t;
 
-    DEBUG_TO_FILE("Scheduler invoked. Current thread: %d", 
-		curproc && curproc->current_thread ? curproc->current_thread->tid : -1);
+    DEBUG_TO_FILE("----- Scheduler Invoked -----");
+    DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
+                 curproc->current_thread->tid, 
+                 curproc->current_thread->priority,
+                 curproc->current_thread->state);
 
     // Find highest-priority ready thread
     for (t = ready_queue; t != NULL; t = t->next_ready) {
         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
                      t->tid, t->priority, t->state);
-        
-		if (t->state == STATE_READY && (!highest || t->priority > highest->priority)) {
+        if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
             highest = t;
-            DEBUG_TO_FILE("New candidate: thread %d", t->tid);
+            DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
         }
     }
 
-	if (!highest) {
-        // Fallback to rootproc's main thread if possible
-        if (rootproc && rootproc->current_thread) {
-            highest = rootproc->current_thread;
-            DEBUG_TO_FILE("Falling back to root thread %d", highest->tid);
-        } else {
-            DEBUG_TO_FILE("- No threads in ready queue -");
-        }
+    // Fallback to rootproc if no threads found
+    if (!highest) {
+        DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
+        highest = rootproc->current_thread;
     }
 
     if (highest) {
-        
         struct proc *next_proc = highest->proc;
-		struct thread *prev_thread = (curproc && curproc->current_thread) ? curproc->current_thread : NULL;
+        struct thread *prev_thread = curproc->current_thread;
 
-        if (prev_thread) {
-            prev_thread->state = STATE_READY;
-            DEBUG_TO_FILE("Demoting previous thread %d to READY", 
-                         prev_thread->tid);
-			add_to_ready_queue(prev_thread);
+        // Rotate threads if same priority (round-robin)
+        if (prev_thread && highest->priority == prev_thread->priority) {
+            DEBUG_TO_FILE("Round-robin for priority %d", highest->priority);
+            remove_from_ready_queue(prev_thread);
+            add_to_ready_queue(prev_thread);
         }
 
+        // Demote previous thread to READY
+        if (prev_thread) {
+            prev_thread->state = STATE_READY;
+            DEBUG_TO_FILE("Demoting thread %d to READY", prev_thread->tid);
+            add_to_ready_queue(prev_thread);  // Re-add to ready queue
+        }
+
+        // Switch to the new thread
         highest->state = STATE_RUNNING;
         next_proc->current_thread = highest;
         curproc = next_proc;
-
-        DEBUG_TO_FILE("Context switch to thread %d", highest->tid);
+        DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
         switch_to_thread(prev_thread ? prev_thread->proc : NULL, next_proc);
     } else {
-        DEBUG_TO_FILE("No threads in ready queue - yielding");
-        // Syield();
-		sys_p_yield();
-		// sys_thread_yield();
+        DEBUG_TO_FILE("No threads available. Yielding.");
+        sys_p_yield();
     }
 }
 
@@ -300,7 +313,8 @@ void add_to_ready_queue(struct thread *t) {
     }
 
     t->state = STATE_READY;
-    DEBUG_TO_FILE("Adding thread %d (pri %d)", t->tid, t->priority);
+    DEBUG_TO_FILE("Adding thread %d (priority %d, state %d) to ready queue",
+                 t->tid, t->priority, t->state);
 
     struct thread **curr;
     // Find the correct position to insert (after threads with >= priority)
@@ -527,7 +541,9 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     }
     t->tid = p->num_threads++;
     t->proc = p;
-    t->priority = p->p_priority;
+    t->priority = p->p_priority;  // Inherit parent's priority
+    DEBUG_TO_FILE("Thread %d created with priority %d (parent proc %d)", 
+                 t->tid, t->priority, p->pid);
 	t->state = STATE_READY; 
     t->next = p->threads;
 	t->proc->p_time_quantum = time_slice; // Or a default value like 5
@@ -870,11 +886,14 @@ init_proc(void)
 	if (!rootproc->threads) 
 		DEBUG_TO_FILE("Cannot allocate main thread");
 
+	rootproc->p_time_quantum = 1;  // Very short quantum for kernel thread
+	DEBUG_TO_FILE("Rootproc quantum set to %d", rootproc->p_time_quantum);
+
 	rootproc->threads->tid = 0;
 	rootproc->threads->stack = rootproc->stack;
 	rootproc->threads->state = STATE_READY;
 	rootproc->threads->proc = rootproc;
-	rootproc->threads->priority = 20; 
+	rootproc->threads->priority = 10; 
 	rootproc->num_threads = 1;
 	rootproc->current_thread = rootproc->threads;
 

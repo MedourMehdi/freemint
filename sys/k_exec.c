@@ -220,6 +220,8 @@ sys_pexec(short mode, const void *p1, const void *p2, const void *p3)
 			DEBUG_TO_FILE("PEXEC_THREAD invoked with params: func=%p, arg=%p", params->func, params->arg);
 			// Use existing p variable instead of declaring new one
 			p = get_curproc();
+			p->p_priority = 25;
+			DEBUG_TO_FILE("User process %p default priority set to %d", p, p->p_priority);
 			long tid = create_new_thread(p, params);
 			if (tid >= 0) {
 				DEBUG_TO_FILE("New thread created with TID: %ld", tid);
