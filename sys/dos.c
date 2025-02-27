@@ -115,6 +115,10 @@ sys_s_yield (void)
 {
 	PROC *p = get_curproc();
 
+	if(p->current_thread){
+		DEBUG_TO_FILE("Thread %d yielding control.", p->current_thread->tid);
+	}
+	
 	/* reward the nice process */
 	p->curpri = p->pri;
 	sleep (READY_Q, p->wait_cond);

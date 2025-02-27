@@ -58,11 +58,11 @@ struct proc *_cdecl get_curproc(void);
 int tas(volatile long *lock);
 void switch_to_thread(struct proc *from, struct proc *to);
 void schedule(void);
-void add_to_wait_queue(struct proc **queue, struct proc *p);
-void remove_from_wait_queue(struct proc **queue, struct proc *p);
-void add_to_ready_queue(struct proc *p);
-void remove_from_ready_queue(struct proc *p);
-struct proc* remove_highest_priority(struct proc **queue);
+void add_to_wait_queue(struct thread **queue, struct thread *t);
+void remove_from_wait_queue(struct thread **queue, struct thread *t);
+void add_to_ready_queue(struct thread *t);
+void remove_from_ready_queue(struct thread *t);
+struct thread* remove_highest_priority(struct thread **queue);
 void th_sleep(void);
 void wakeup(struct proc *p);
 extern void timer_interrupt_handler(void);
@@ -73,5 +73,7 @@ void mutex_unlock(struct mutex *m);
 void mutex_init(struct mutex *m);
 void semaphore_init(struct semaphore *s, int count);
 void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg);
+
+long create_new_thread(struct proc *p, const struct thread_params *params);
 
 # endif /* _proc_h */

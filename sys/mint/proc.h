@@ -300,11 +300,14 @@ struct proc
     // Queue pointers
     struct proc *p_next;         // Next process in the ready queue
     struct proc *p_wnext;        // Next process in a wait queue (mutex/semaphore)
+
+	struct thread *current_thread; // Currently executing thread
 };
 
 /* Process states */
 #define STATE_RUNNING   0
 #define STATE_BLOCKED   1
+#define STATE_READY   2
 
 /* Process flags */
 #define PF_YIELD        0x0001  // Yield requested
@@ -314,6 +317,23 @@ struct proc
 
 /* Thread Control Block (TCB) */
 #define THREAD_TLS_KEYS 32
+
+#define PEXEC_THREAD 207  // New mode for thread creation
+
+#ifndef __SIZE_T
+#define __SIZE_T
+typedef unsigned long size_t;
+#endif
+
+extern struct thread *ready_queue;
+
+struct thread_params {
+    void (*func)(void*);
+    void *arg;
+    void *stack;
+    size_t stack_size;
+    unsigned long flags;
+};
 
 struct thread {
     int tid;                     // Thread ID
@@ -331,6 +351,11 @@ struct thread {
 	int exit_code;              // Thread exit status
 	struct thread *join_queue;   // Threads waiting to join
 	struct proc *waiting_procs;   // List of processes waiting on this thread
+	struct thread *wait_queue;    // Wait queue for synchronization
+    struct thread *next_ready;   // For ready queue linking
+    short state;                 // Thread state (RUNNING/READY/BLOCKED)
+
+	struct context ctxt;
 };
 
 /* Thread flags */
@@ -339,13 +364,13 @@ struct thread {
 
 struct semaphore {
     int count;
-    struct proc *wait_queue;
+	struct thread *wait_queue;    // Threads waiting on semaphore
 };
 
 struct mutex {
     volatile long locked;
-    struct proc *owner;
-    struct proc *wait_queue;     // Priority-sorted
+    struct thread *owner;          // Change from proc to thread
+    struct thread *wait_queue;     // Change to thread queue
 };
 
 /* Syscall numbers */
@@ -360,12 +385,12 @@ struct mutex {
 #define SYS_thread_cancel 0x18c
 
 /* Threads function prototypes */
-long sys_setpriority(long priority);
-long sys_yield(void);
-long sys_tls_create(void);
-long sys_tls_set(long key, void *value);
-long sys_tls_get(long key);
-long sys_create_thread(void (*func)(void*), void *arg, void *stack);
+long sys_p_setpriority(long priority);
+long sys_p_yield(void);
+long sys_p_tlscreate(void);
+long sys_p_tlsset(long key, void *value);
+long sys_p_tlsget(long key);
+long sys_p_createthread(void (*func)(void*), void *arg, void *stack);
 long sys_exit(void);
 
 /* ToDo */

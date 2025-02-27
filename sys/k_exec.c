@@ -215,6 +215,20 @@ sys_pexec(short mode, const void *p1, const void *p2, const void *p3)
 			mkload = mkgo = 1;
 			overlay = mkname = 1;
 			break;
+		case PEXEC_THREAD: {
+			const struct thread_params *params = (const struct thread_params *)ptr_1.v;
+			DEBUG_TO_FILE("PEXEC_THREAD invoked with params: func=%p, arg=%p", params->func, params->arg);
+			// Use existing p variable instead of declaring new one
+			p = get_curproc();
+			long tid = create_new_thread(p, params);
+			if (tid >= 0) {
+				DEBUG_TO_FILE("New thread created with TID: %ld", tid);
+				schedule();
+			} else {
+				DEBUG_TO_FILE("Failed to create new thread. Error: %ld", tid);
+			}
+			return tid;
+			}
 		case 3:
 			mkload = 1;
 			break;

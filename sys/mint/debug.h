@@ -56,6 +56,8 @@ extern int debug_logging;
 
 # endif /* DEBUG_INFO */
 
+extern void debug_to_file(const char *filename, const char *fmt, ...);
+#define DEBUG_TO_FILE(...) debug_to_file("c:\\kern.log", __VA_ARGS__)
 
 void		debug_ws	(const char *s);
 int		_ALERT		(const char *);
