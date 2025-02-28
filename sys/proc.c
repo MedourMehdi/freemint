@@ -81,8 +81,6 @@ static int timer_initialized = 0;
 
 void exit_thread(void);
 long _cdecl sys_thread_yield(void);
-// static void thread_change_context(struct context *ctx);
-// static int thread_save_context(struct context *ctxt);
 
 // Define debug_to_file function
 void debug_to_file(const char *filename, const char *fmt, ...) {
@@ -120,105 +118,23 @@ int tas(volatile long *lock) {
     return old_value;
 }
 
-/*
- * Save current context to the specified context structure
- * Returns 0 when first called, 1 when resumed
- */
-// static int thread_save_context(struct context *ctx)
-// {
-//     int ret = 0;
-//     asm volatile (
-// #ifdef __mcoldfire__
-//         /* ColdFire variant */
-//         "lea      (-44, %%sp), %%sp\n\t"            // Allocate space for regs
-//         "movem.l  %%d2-%%d7, (%%sp)\n\t"             // Save d registers
-//         "movem.l  %%a2-%%a5, 28(%%sp)\n\t"           // Save a registers
-//         "move.l   %%usp, %%a0\n\t"                   // Get user stack pointer
-//         "move.l   %%a0, (44, %%sp)\n\t"              // Save USP after saved regs
-//         "move.l   (44+4, %%sp), %%a0\n\t"            // Get return address (PC)
-//         "move.l   %%a0, %1\n\t"                       // Store PC in context
-//         "move.l   %%sp, %0\n\t"                       // Store SP in context
-//         "lea      (44, %%sp), %%sp\n\t"              // Restore SP
-// #else
-//         /* Standard m68k variant */
-//         "movem.l  %%d2-%%d7, -(%%sp)\n\t"             // Save d registers
-//         "movem.l  %%a2-%%a6, -(%%sp)\n\t"             // Save a registers
-//         "move.l   %%usp, %%a0\n\t"                   // Get user stack pointer
-//         "move.l   %%a0, -(%%sp)\n\t"                 // Save USP
-//         "move.l   (52, %%sp), %%a0\n\t"              // Get return address (PC after regs)
-//         "move.l   %%a0, %1\n\t"                       // Store PC in context
-//         "move.l   %%sp, %0\n\t"                       // Store SP in context
-//         "addq.l   #4, %%sp\n\t"                       // Remove USP from stack
-//         "movem.l  (%%sp)+, %%d2-%%d7\n\t"             // Restore d registers
-//         "movem.l  (%%sp)+, %%a2-%%a6\n\t"             // Restore a registers
-// #endif
-//         : "=m" (ctx->usp), "=m" (ctx->pc)             // Outputs
-//         :                                              // No inputs
-//         : "%%a0", "cc", "memory"                       // Clobbers
-//     );
-//     return ret;
-// }
-
-
-// /*
-//  * Switch to the specified context
-//  */
-// static void thread_change_context(struct context *ctx)
-// {
-//     asm volatile (
-// #ifdef __mcoldfire__
-//         /* ColdFire variant */
-//         "lea      (-44, %%sp), %%sp\n\t"            // Allocate space for regs
-//         "movem.l  (%%a0)+, %%d2-%%d7\n\t"            // Restore d registers
-//         "movem.l  (%%a0)+, %%a2-%%a5\n\t"            // Restore a registers
-//         "move.l   (%%a0)+, %%a1\n\t"                 // Get USP
-//         "move.l   %%a1, %%usp\n\t"                   // Restore USP
-//         "move.l   (%%a0)+, %%a1\n\t"                 // Get PC
-//         "move.l   %%a1, (44+4, %%sp)\n\t"            // Store return address
-//         "lea      (44, %%sp), %%sp\n\t"              // Restore SP
-//         "rte\n\t"                                     // Return to new context
-// #else
-//         /* Standard m68k variant */
-//         "movem.l  (%%a0), %%d2-%%d7\n\t"              // Restore d registers
-//         "movem.l  (%%a0)+, %%a2-%%a6\n\t"            // Restore a registers
-//         "move.l   (%%a0)+, %%a1\n\t"                 // Get USP
-//         "move.l   %%a1, %%usp\n\t"                   // Restore USP
-//         "move.l   (%%a0)+, -(%%sp)\n\t"              // Push PC as return address
-//         "rte\n\t"                                     // Return to new context
-// #endif
-//         :                                               // No outputs
-//         : "a" (ctx)                                   // Input context in a0
-//         : "%%d0", "%%d1", "%%a0", "%%a1", "cc", "memory"
-//     );
-// }
-
-
-// static int custom_save_context(struct context *ctxt) {
-//     asm volatile (
-// #ifdef __mcoldfire__
-//         "lea -48(sp),sp\n\t"
-//         "movem.l d2-d7/a2-a6,(sp)\n\t"
-//         "move.l (48+4)(sp), %0\n\t"  // Return address after call
-//         "move.l sp, %1\n\t"
-//         "lea 48(sp),sp\n\t"
-// #else
-//         "movem.l d0-d7/a0-a6, -(sp)\n\t"  // Save registers
-//         "move.l 56(sp), %0\n\t"           // Get return address (14 registers *4 = 56)
-//         "move.l sp, %1\n\t"               // Save current SP
-//         "movem.l (sp)+, d0-d7/a0-a6\n\t"  // Restore registers
-// #endif
-//         : "=m" (ctxt->pc), "=m" (ctxt->usp) // Change sp to usp if that's the correct field
-//         : 
-//         : "memory"
-//     );
-//     return 0; // Return 0 to indicate success
-// }
-
 // Add exit_thread function to handle thread termination
 void exit_thread(void) {
     sys_exit();
 }
 
+/**
+ * Initializes the stack for a new thread.
+ * 
+ * This function sets up the initial stack frame and context for a new thread
+ * to start execution. It aligns the stack pointer, sets up a simulated 
+ * function call frame with a return address and argument, and initializes 
+ * the thread's context with the entry point function and stack pointer.
+ * 
+ * @param t A pointer to the thread structure to initialize.
+ * @param entry The function to execute when the thread starts.
+ * @param arg The argument to pass to the entry function.
+ */
 void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) 
 {
     DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
@@ -228,56 +144,28 @@ void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg)
     unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
     sp = (unsigned long*)((unsigned long)sp & ~3);
 
-    /* Create initial stack frame for context switch */
+	t->stack = sp;
+    /* Create initial stack frame to mimic function call (argument + return address) */
 #ifdef __mcoldfire__
-    /* ColdFire needs 8-byte aligned stack with exception frame */
-    sp -= 4;  // Space for SR/PC + pad + arg
-    sp[3] = 0x0000;        // SR (user mode)
-    sp[2] = (long)entry;   // PC
-    sp[1] = 0;             // Padding for alignment
-    sp[0] = (long)arg;     // Argument passed on stack
+    /* ColdFire: Push argument and return address */
+    sp -= 2;  // Space for argument and return address
+    sp[1] = (long)arg;          // Argument
+    sp[0] = (long)exit_thread;  // Return address after function returns
 #else
-    /* Standard m68k 4-byte aligned stack */
-    sp -= 3;
-    sp[2] = 0x0000;        // SR (user mode)
-    sp[1] = (long)entry;   // PC  
-    sp[0] = (long)arg;     // Argument passed on stack
+    /* Standard m68k: Push argument and return address */
+    sp -= 2;
+    sp[1] = (long)arg;
+    sp[0] = (long)exit_thread;
 #endif
 
     /* Set up thread context */
-    t->ctxt.usp = (unsigned long)sp;   // Stack starts at SR position
-    t->ctxt.pc = (unsigned long)entry; // Initial execution point
+    t->ctxt.usp = (unsigned long)sp;   // Stack pointer points to return address
+    t->ctxt.pc = (unsigned long)entry; // Start execution at the entry function
     t->ctxt.sr = 0x0000;              // User mode
-    
-    /* m68k calling convention - first argument in D0 */
-    t->ctxt.regs[0] = (unsigned long)arg;
 
-    DEBUG_TO_FILE("Thread %d: USP=0x%lx PC=0x%lx D0=0x%lx", 
-        t->tid, t->ctxt.usp, t->ctxt.pc, t->ctxt.regs[0]);
+    DEBUG_TO_FILE("Thread %d: USP=0x%lx PC=0x%lx", 
+        t->tid, t->ctxt.usp, t->ctxt.pc);
 }
-
-// void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
-//     DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
-// 		entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
-//     unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
-//     sp = (unsigned long*)((unsigned long)sp & ~1);
-    
-//     // Simulate a function call: entry(arg) -> exit_thread()
-//     *--sp = (unsigned long)exit_thread;  // Return address after entry() completes
-//     *--sp = (unsigned long)arg;          // Argument
-//     *--sp = 0;                           // Dummy frame pointer
-    
-//     t->ctxt.pc = (long)entry;            // Start execution at entry()
-//     t->ctxt.sr = 0x0000;                 // User mode
-// 	// t->ctxt.sr = 0x2000;                 // Supervisor mode (temporarily)
-//     t->ctxt.usp = (long)sp;              // User stack pointer
-//     t->ctxt.ssp = (long)(t->proc->stack + ISTKSIZE); // Supervisor stack
-//     t->sp = sp;
-//     DEBUG_TO_FILE("Thread %d stack: PC=0x%lx, SP=0x%lx, ARG=0x%lx", 
-// 		t->tid, t->ctxt.pc, t->ctxt.usp, arg);
-//     DEBUG_TO_FILE("Stack initialized: sp=%p pc=%lx (arg=%p)",
-// 		sp, t->ctxt.pc, arg);
-// }
 
 void switch_to_thread(struct proc *from, struct proc *to) {
     // Allow 'from' to be NULL for initial switch
@@ -286,29 +174,32 @@ void switch_to_thread(struct proc *from, struct proc *to) {
         return;
     }
 
+    if (from) {
+		DEBUG_TO_FILE("Before save_context -> thread %d", from->current_thread->tid);
+        save_context(&from->current_thread->ctxt);
+			DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
+            return; // Return from context switch
+        // if (save_context(&from->current_thread->ctxt)) {
+		// 	DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
+        //     return; // Return from context switch
+        // }
+    }
+
+    // Critical: Ensure supervisor stack is valid before switch
+	DEBUG_TO_FILE("Before change_context -> Switched to thread %d", to->current_thread->tid);
+    change_context(&to->current_thread->ctxt);
+    DEBUG_TO_FILE("After change_context -> Switched to thread %d", to->current_thread->tid);
     DEBUG_TO_FILE("Context switch: thread %d -> %d", 
-            from ? from->current_thread->tid : -1, 
-            to->current_thread->tid);
-	DEBUG_TO_FILE("Switching to thread %d: A0=0x%lx", 
+		from ? from->current_thread->tid : -1, 
+		to->current_thread->tid);
+	DEBUG_TO_FILE("Switching to thread %d: (ctxt.regs[8]) A0=0x%lx", 
 		to->current_thread->tid, to->current_thread->ctxt.regs[8]);
 	DEBUG_TO_FILE("Switching to thread %d: PC=0x%lx, SP=0x%lx, SR=0x%x", 
 		to->current_thread->tid, 
 		to->current_thread->ctxt.pc,
 		to->current_thread->ctxt.usp,
-		to->current_thread->ctxt.sr);
-
-    if (from) {
-        if (save_context(&from->current_thread->ctxt)) {
-			DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
-            return; // Return from context switch
-        }
-    }
-
-    // Critical: Ensure supervisor stack is valid before switch
-    change_context(&to->current_thread->ctxt);
-    DEBUG_TO_FILE("Switched to thread %d", to->current_thread->tid);
+		to->current_thread->ctxt.sr);	
 }
-
 
 /* Process iteration macro */
 #define for_each_proc(p) for (p = proclist; p != NULL; p = p->p_next)
@@ -337,9 +228,70 @@ long _cdecl sys_thread_yield(void) {
  */
 
 /* Modified schedule() with detailed logging */
+// void schedule(void) {
+//     struct thread *highest = NULL;
+//     struct thread *t;
+
+//     DEBUG_TO_FILE("----- Scheduler Invoked -----");
+//     DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
+//                  curproc->current_thread->tid, 
+//                  curproc->current_thread->priority,
+//                  curproc->current_thread->state);
+
+//     // Find highest-priority ready thread
+//     for (t = ready_queue; t != NULL; t = t->next_ready) {
+//         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
+//                      t->tid, t->priority, t->state);
+// 		if (curproc->current_thread->state == STATE_READY) {
+// 			// Current thread is already in READY state, don't demote it again
+// 			continue;
+// 		}
+//         if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
+//             highest = t;
+//             DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
+//         }
+//     }
+
+//     // Fallback to rootproc if no threads found
+//     if (!highest) {
+//         DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
+//         highest = rootproc->current_thread;
+//     }
+
+//     if (highest) {
+//         struct proc *next_proc = highest->proc;
+//         struct thread *prev_thread = curproc->current_thread;
+
+//         // Rotate threads if same priority (round-robin)
+//         if (prev_thread && highest->priority == prev_thread->priority) {
+//             DEBUG_TO_FILE("Round-robin for priority %d", highest->priority);
+//             remove_from_ready_queue(prev_thread);
+//             add_to_ready_queue(prev_thread);
+//         }
+
+//         // Demote previous thread to READY
+//         if (prev_thread) {
+//             prev_thread->state = STATE_READY;
+//             DEBUG_TO_FILE("Demoting thread %d to READY", prev_thread->tid);
+//             add_to_ready_queue(prev_thread);  // Re-add to ready queue
+//         }
+
+//         // Switch to the new thread
+//         highest->state = STATE_RUNNING;
+//         next_proc->current_thread = highest;
+//         curproc = next_proc;
+//         DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
+//         switch_to_thread(prev_thread ? prev_thread->proc : NULL, next_proc);
+//     } else {
+//         DEBUG_TO_FILE("No threads available. Yielding.");
+//         sys_p_yield();
+//     }
+// }
+
 void schedule(void) {
     struct thread *highest = NULL;
     struct thread *t;
+    struct thread *prev_thread = NULL; // Keep track of the previously scheduled thread
 
     DEBUG_TO_FILE("----- Scheduler Invoked -----");
     DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
@@ -352,6 +304,9 @@ void schedule(void) {
         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
                      t->tid, t->priority, t->state);
         if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
+            if (t == prev_thread) { // Skip the previously scheduled thread
+                continue;
+            }
             highest = t;
             DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
         }
@@ -363,33 +318,65 @@ void schedule(void) {
         highest = rootproc->current_thread;
     }
 
-    if (highest) {
-        struct proc *next_proc = highest->proc;
-        struct thread *prev_thread = curproc->current_thread;
-
-        // Rotate threads if same priority (round-robin)
-        if (prev_thread && highest->priority == prev_thread->priority) {
-            DEBUG_TO_FILE("Round-robin for priority %d", highest->priority);
-            remove_from_ready_queue(prev_thread);
-            add_to_ready_queue(prev_thread);
+    // Check if the current thread is the same as the highest-priority thread
+    if (curproc->current_thread == highest) {
+        DEBUG_TO_FILE("Current thread is the same as the highest-priority thread.");
+        // If the current thread is in the STATE_YIELDING state, yield it
+        if (curproc->current_thread->state == STATE_YIELDING) {
+            DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
+                         curproc->current_thread->tid);
+            curproc->current_thread->state = STATE_READY;
+			prev_thread = curproc->current_thread; // Update prev_thread
         }
+        return;
+    }
 
-        // Demote previous thread to READY
-        if (prev_thread) {
-            prev_thread->state = STATE_READY;
-            DEBUG_TO_FILE("Demoting thread %d to READY", prev_thread->tid);
-            add_to_ready_queue(prev_thread);  // Re-add to ready queue
-        }
+    // Demote the current thread to READY state if it's not the highest-priority thread
+    if (curproc->current_thread->state != STATE_YIELDING) {
+		if (curproc->current_thread->state != STATE_READY) {
+			curproc->current_thread->state = STATE_READY;
+		}
+        DEBUG_TO_FILE("Demoting thread %d to READY", curproc->current_thread->tid);
+        add_to_ready_queue(curproc->current_thread);  // Re-add to ready queue
+    }
 
-        // Switch to the new thread
-        highest->state = STATE_RUNNING;
-        next_proc->current_thread = highest;
-        curproc = next_proc;
-        DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
-        switch_to_thread(prev_thread ? prev_thread->proc : NULL, next_proc);
-    } else {
+    // Switch to the highest-priority thread
+	if (highest->state != STATE_YIELDING) {
+		highest->state = STATE_RUNNING;
+		highest->proc->current_thread = highest;
+		curproc = highest->proc;
+		DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
+		switch_to_thread(curproc->current_thread->proc, highest->proc);
+		prev_thread = highest; // Update prev_thread to point to the newly scheduled thread
+	} else {
+		// If the highest-priority thread is in the STATE_YIELDING state, 
+		// set its state to READY and continue scheduling
+		highest->state = STATE_READY; // Update state to READY
+		DEBUG_TO_FILE("Thread %d is in the STATE_YIELDING state. Continuing scheduling.", 
+					highest->tid);
+		prev_thread = NULL; // Reset prev_thread
+		// Skip this thread and move on to the next one
+		highest = NULL;
+		DEBUG_TO_FILE("Highest thread is NULL. Searching for next thread.");
+
+    }
+
+    // If no threads are available, yield the current thread
+    if (!highest) {
         DEBUG_TO_FILE("No threads available. Yielding.");
         sys_p_yield();
+    }
+
+    // Check if the highest-priority thread is the same as the current thread
+    if (highest == curproc->current_thread) {
+        DEBUG_TO_FILE("Highest-priority thread is the same as the current thread.");
+        // If the highest-priority thread is in the STATE_YIELDING state, yield it
+        if (highest->state == STATE_YIELDING) {
+            DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
+                         highest->tid);
+            highest->state = STATE_READY;
+        }
+        return;
     }
 }
 
@@ -424,7 +411,9 @@ void add_to_ready_queue(struct thread *t) {
         return;
     }
 
-    t->state = STATE_READY;
+    if (t->state != STATE_READY) {
+		t->state = STATE_READY;
+	}
     DEBUG_TO_FILE("Adding thread %d (priority %d, state %d) to ready queue",
                  t->tid, t->priority, t->state);
 
@@ -667,7 +656,7 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     init_thread_stack(t, params->func, params->arg);
     
     DEBUG_TO_FILE("Initialized stack for thread %d. SP: %p", 
-                 t->tid, t->sp);
+                 t->tid, t->ctxt.usp);
     
     add_to_ready_queue(t);
     return t->tid;
@@ -731,7 +720,7 @@ long sys_p_yield(void)
     struct thread *current = curproc->current_thread;
 	DEBUG_TO_FILE("Yielding thread %d. State changed from READY to YIELDING.", current->tid);
 
-    current->state = STATE_READY;
+    current->state = STATE_YIELDING;
     add_to_ready_queue(current); // Re-add to ready queue
     schedule();
     return 0;

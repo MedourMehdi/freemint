@@ -337,8 +337,8 @@ struct thread_params {
 
 struct thread {
     int tid;                     // Thread ID
-    void *sp;                    // Stack pointer
-    void *pc;                    // Program counter
+    // void *sp;                    // Stack pointer
+    // void *pc;                    // Program counter
     struct proc *proc;           // Parent process
     struct thread *next;         // Next thread in list
     void *stack;                 // Stack base address
