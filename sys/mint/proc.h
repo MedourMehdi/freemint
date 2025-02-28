@@ -361,6 +361,7 @@ struct thread {
 /* Thread flags */
 #define THREAD_DETACHED    0x0001
 #define THREAD_CANCELLED   0x0002
+#define THREAD_EXITING     0x0004  // Thread is exiting
 
 struct semaphore {
     int count;

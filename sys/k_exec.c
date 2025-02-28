@@ -224,6 +224,7 @@ sys_pexec(short mode, const void *p1, const void *p2, const void *p3)
 			DEBUG_TO_FILE("User process %p default priority set to %d", p, p->p_priority);
 			long tid = create_new_thread(p, params);
 			if (tid >= 0) {
+				exec_region(p, p->p_mem->mem[0], 1);  // Pass the first MEMREGION of the memspace
 				DEBUG_TO_FILE("New thread created with TID: %ld", tid);
 				schedule();
 			} else {

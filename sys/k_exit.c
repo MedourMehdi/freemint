@@ -73,27 +73,36 @@ terminate(struct proc *pcurproc, short code, short que)
 	struct proc *p;
 	int i, wakemint = 0;
 
+	// if (pcurproc->current_thread->tid == 0)
+	// 	return 0; // Never terminate main thread
 	// Clean up threads before termination
 	if (pcurproc->threads) {
-		// Only cleanup threads if process was using them
-		struct thread *t = pcurproc->threads;
-		while (t) {
-			DEBUG_TO_FILE("In terminate() (k_exit.c) -> Terminating thread %d\n", t->tid);
-			struct thread *next = t->next;
-			if (t->join_queue) {
-				wakeup((struct proc *)t->waiting_procs);
+		// Only clean up non-main threads
+		if (pcurproc->current_thread->tid != 0) {
+			// Only cleanup threads if process was using them
+			struct thread *t = pcurproc->threads;
+			while (t) {
+				// Skip if thread isn't exiting
+				if (!(t->state & THREAD_EXITING)) {
+					t = t->next;
+					continue;
+				}				
+				DEBUG_TO_FILE("In terminate() (k_exit.c) -> Terminating thread %d\n", t->tid);
+				struct thread *next = t->next;
+				if (t->join_queue) {
+					wakeup((struct proc *)t->waiting_procs);
+				}
+				if (t->stack != pcurproc->stack) {
+					DEBUG_TO_FILE("In terminate() (k_exit.c, t->stack != pcurproc->stack) -> Before Calling free_thread_stack for thread %d\n", t->tid);
+					free_thread_stack(t->stack);
+				}
+				kfree(t);
+				t = next;
 			}
-			if (t->stack != pcurproc->stack) {
-				DEBUG_TO_FILE("In terminate() (k_exit.c, t->stack != pcurproc->stack) -> Before Calling free_thread_stack for thread %d\n", t->tid);
-				free_thread_stack(t->stack);
-			}
-			kfree(t);
-			t = next;
+			pcurproc->threads = NULL;
+			pcurproc->num_threads = 0;
 		}
 	}
-	
-	pcurproc->threads = NULL;
-	pcurproc->num_threads = 0;	
 
 	/* notify proc extensions */
 	proc_ext_on_exit(pcurproc, code);

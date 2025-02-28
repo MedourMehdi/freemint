@@ -81,7 +81,8 @@ static int timer_initialized = 0;
 
 void exit_thread(void);
 long _cdecl sys_thread_yield(void);
-static int custom_save_context(struct context *ctxt);
+// static void thread_change_context(struct context *ctx);
+// static int thread_save_context(struct context *ctxt);
 
 // Define debug_to_file function
 void debug_to_file(const char *filename, const char *fmt, ...) {
@@ -119,47 +120,140 @@ int tas(volatile long *lock) {
     return old_value;
 }
 
-static int custom_save_context(struct context *ctxt) {
-    asm volatile (
-#ifdef __mcoldfire__
-        "lea -48(sp),sp\n\t"
-        "movem.l d2-d7/a2-a6,(sp)\n\t"
-        "move.l (48+4)(sp), %0\n\t"  // Return address after call
-        "move.l sp, %1\n\t"
-        "lea 48(sp),sp\n\t"
-#else
-        "movem.l d0-d7/a0-a6, -(sp)\n\t"  // Save registers
-        "move.l 56(sp), %0\n\t"           // Get return address (14 registers *4 = 56)
-        "move.l sp, %1\n\t"               // Save current SP
-        "movem.l (sp)+, d0-d7/a0-a6\n\t"  // Restore registers
-#endif
-        : "=m" (ctxt->pc), "=m" (ctxt->usp) // Change sp to usp if that's the correct field
-        : 
-        : "memory"
-    );
-    return 0; // Return 0 to indicate success
-}
+/*
+ * Save current context to the specified context structure
+ * Returns 0 when first called, 1 when resumed
+ */
+// static int thread_save_context(struct context *ctx)
+// {
+//     int ret = 0;
+//     asm volatile (
+// #ifdef __mcoldfire__
+//         /* ColdFire variant */
+//         "lea      (-44, %%sp), %%sp\n\t"            // Allocate space for regs
+//         "movem.l  %%d2-%%d7, (%%sp)\n\t"             // Save d registers
+//         "movem.l  %%a2-%%a5, 28(%%sp)\n\t"           // Save a registers
+//         "move.l   %%usp, %%a0\n\t"                   // Get user stack pointer
+//         "move.l   %%a0, (44, %%sp)\n\t"              // Save USP after saved regs
+//         "move.l   (44+4, %%sp), %%a0\n\t"            // Get return address (PC)
+//         "move.l   %%a0, %1\n\t"                       // Store PC in context
+//         "move.l   %%sp, %0\n\t"                       // Store SP in context
+//         "lea      (44, %%sp), %%sp\n\t"              // Restore SP
+// #else
+//         /* Standard m68k variant */
+//         "movem.l  %%d2-%%d7, -(%%sp)\n\t"             // Save d registers
+//         "movem.l  %%a2-%%a6, -(%%sp)\n\t"             // Save a registers
+//         "move.l   %%usp, %%a0\n\t"                   // Get user stack pointer
+//         "move.l   %%a0, -(%%sp)\n\t"                 // Save USP
+//         "move.l   (52, %%sp), %%a0\n\t"              // Get return address (PC after regs)
+//         "move.l   %%a0, %1\n\t"                       // Store PC in context
+//         "move.l   %%sp, %0\n\t"                       // Store SP in context
+//         "addq.l   #4, %%sp\n\t"                       // Remove USP from stack
+//         "movem.l  (%%sp)+, %%d2-%%d7\n\t"             // Restore d registers
+//         "movem.l  (%%sp)+, %%a2-%%a6\n\t"             // Restore a registers
+// #endif
+//         : "=m" (ctx->usp), "=m" (ctx->pc)             // Outputs
+//         :                                              // No inputs
+//         : "%%a0", "cc", "memory"                       // Clobbers
+//     );
+//     return ret;
+// }
+
+
+// /*
+//  * Switch to the specified context
+//  */
+// static void thread_change_context(struct context *ctx)
+// {
+//     asm volatile (
+// #ifdef __mcoldfire__
+//         /* ColdFire variant */
+//         "lea      (-44, %%sp), %%sp\n\t"            // Allocate space for regs
+//         "movem.l  (%%a0)+, %%d2-%%d7\n\t"            // Restore d registers
+//         "movem.l  (%%a0)+, %%a2-%%a5\n\t"            // Restore a registers
+//         "move.l   (%%a0)+, %%a1\n\t"                 // Get USP
+//         "move.l   %%a1, %%usp\n\t"                   // Restore USP
+//         "move.l   (%%a0)+, %%a1\n\t"                 // Get PC
+//         "move.l   %%a1, (44+4, %%sp)\n\t"            // Store return address
+//         "lea      (44, %%sp), %%sp\n\t"              // Restore SP
+//         "rte\n\t"                                     // Return to new context
+// #else
+//         /* Standard m68k variant */
+//         "movem.l  (%%a0), %%d2-%%d7\n\t"              // Restore d registers
+//         "movem.l  (%%a0)+, %%a2-%%a6\n\t"            // Restore a registers
+//         "move.l   (%%a0)+, %%a1\n\t"                 // Get USP
+//         "move.l   %%a1, %%usp\n\t"                   // Restore USP
+//         "move.l   (%%a0)+, -(%%sp)\n\t"              // Push PC as return address
+//         "rte\n\t"                                     // Return to new context
+// #endif
+//         :                                               // No outputs
+//         : "a" (ctx)                                   // Input context in a0
+//         : "%%d0", "%%d1", "%%a0", "%%a1", "cc", "memory"
+//     );
+// }
+
+
+// static int custom_save_context(struct context *ctxt) {
+//     asm volatile (
+// #ifdef __mcoldfire__
+//         "lea -48(sp),sp\n\t"
+//         "movem.l d2-d7/a2-a6,(sp)\n\t"
+//         "move.l (48+4)(sp), %0\n\t"  // Return address after call
+//         "move.l sp, %1\n\t"
+//         "lea 48(sp),sp\n\t"
+// #else
+//         "movem.l d0-d7/a0-a6, -(sp)\n\t"  // Save registers
+//         "move.l 56(sp), %0\n\t"           // Get return address (14 registers *4 = 56)
+//         "move.l sp, %1\n\t"               // Save current SP
+//         "movem.l (sp)+, d0-d7/a0-a6\n\t"  // Restore registers
+// #endif
+//         : "=m" (ctxt->pc), "=m" (ctxt->usp) // Change sp to usp if that's the correct field
+//         : 
+//         : "memory"
+//     );
+//     return 0; // Return 0 to indicate success
+// }
 
 // Add exit_thread function to handle thread termination
 void exit_thread(void) {
     sys_exit();
 }
 
-void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
+void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) 
+{
     DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
-	entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
-	unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
-	sp = (unsigned long*)((unsigned long)sp & ~1);
+        entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
 
-	*--sp = (unsigned long)exit_thread;  // Return to exit_thread after entry()
-	
-	// Set argument in D0 (m68k C calling convention)
-	t->ctxt.regs[0] = (unsigned long)arg; // D0 = arg
-	t->ctxt.pc = (long)entry;            // Start execution at entry()
-	t->ctxt.sr = 0x0000;                 // User mode
+    /* Get aligned stack top */
+    unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
+    sp = (unsigned long*)((unsigned long)sp & ~3);
 
-	DEBUG_TO_FILE("Thread %d: D0=0x%lx, PC=0x%lx", 
-				t->tid, t->ctxt.regs[0], t->ctxt.pc);
+    /* Create initial stack frame for context switch */
+#ifdef __mcoldfire__
+    /* ColdFire needs 8-byte aligned stack with exception frame */
+    sp -= 4;  // Space for SR/PC + pad + arg
+    sp[3] = 0x0000;        // SR (user mode)
+    sp[2] = (long)entry;   // PC
+    sp[1] = 0;             // Padding for alignment
+    sp[0] = (long)arg;     // Argument passed on stack
+#else
+    /* Standard m68k 4-byte aligned stack */
+    sp -= 3;
+    sp[2] = 0x0000;        // SR (user mode)
+    sp[1] = (long)entry;   // PC  
+    sp[0] = (long)arg;     // Argument passed on stack
+#endif
+
+    /* Set up thread context */
+    t->ctxt.usp = (unsigned long)sp;   // Stack starts at SR position
+    t->ctxt.pc = (unsigned long)entry; // Initial execution point
+    t->ctxt.sr = 0x0000;              // User mode
+    
+    /* m68k calling convention - first argument in D0 */
+    t->ctxt.regs[0] = (unsigned long)arg;
+
+    DEBUG_TO_FILE("Thread %d: USP=0x%lx PC=0x%lx D0=0x%lx", 
+        t->tid, t->ctxt.usp, t->ctxt.pc, t->ctxt.regs[0]);
 }
 
 // void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) {
@@ -204,13 +298,13 @@ void switch_to_thread(struct proc *from, struct proc *to) {
 		to->current_thread->ctxt.sr);
 
     if (from) {
-        if (custom_save_context(&from->current_thread->ctxt)) {
+        if (save_context(&from->current_thread->ctxt)) {
 			DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
             return; // Return from context switch
         }
     }
 
-    // Proceed even if 'from' is NULL
+    // Critical: Ensure supervisor stack is valid before switch
     change_context(&to->current_thread->ctxt);
     DEBUG_TO_FILE("Switched to thread %d", to->current_thread->tid);
 }
@@ -648,6 +742,7 @@ long sys_exit(void) {
     struct thread *current = p->current_thread;
     struct thread **t;
 
+	current->thread_flags |= THREAD_EXITING;
 	DEBUG_TO_FILE("Exiting thread %d from process %p", current->tid, p);
 
     // Remove current thread from ready queue
