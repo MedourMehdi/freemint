@@ -525,9 +525,9 @@ opcode	ret	class name	args */
 0x187	long	Ptlsset	(long key, void *value)
 0x188	long	Ptlsget	(long key)
 0x189	long	Pcreatethread	(void *func, void *arg, void *stack)
-0x18a	long	thread_join	(int tid, void **retval)
-0x18b	long	thread_detach	(int tid)
-0x18c	long	thread_cancel	(int tid)
+0x18a	long	Pexit	(void)
+0x18b		undefined
+0x18c		undefined
 0x184		undefined
 0x185		undefined
 0x186		undefined

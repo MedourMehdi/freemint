@@ -526,9 +526,9 @@ Func dos_tab [DOS_MAX] =
 	/* 0x187 */		sys_p_tlsset,
 	/* 0x188 */		sys_p_tlsget,
 	/* 0x189 */		sys_p_createthread,
-	/* 0x18a */		sys_enosys,		/* reserved */
-	/* 0x18b */		sys_enosys,		/* reserved */
-	/* 0x18c */		sys_enosys,		/* reserved */
+	/* 0x18a */		sys_p_exit,
+	/* 0x18b */		sys_p_mutex_lock,
+	/* 0x18c */		sys_p_mutex_unlock,
 	/* 0x18d */		sys_enosys,		/* reserved */
 	/* 0x18e */		sys_enosys,		/* reserved */
 	/* 0x18f */		sys_enosys,		/* reserved */

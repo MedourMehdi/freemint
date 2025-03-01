@@ -120,7 +120,7 @@ int tas(volatile long *lock) {
 
 // Add exit_thread function to handle thread termination
 void exit_thread(void) {
-    sys_exit();
+    sys_p_exit();
 }
 
 /**
@@ -291,94 +291,164 @@ long _cdecl sys_thread_yield(void) {
 void schedule(void) {
     struct thread *highest = NULL;
     struct thread *t;
-    struct thread *prev_thread = NULL; // Keep track of the previously scheduled thread
 
     DEBUG_TO_FILE("----- Scheduler Invoked -----");
-    DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
-                 curproc->current_thread->tid, 
-                 curproc->current_thread->priority,
-                 curproc->current_thread->state);
+    if (curproc && curproc->current_thread) {
+        DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
+                     curproc->current_thread->tid, 
+                     curproc->current_thread->priority,
+                     curproc->current_thread->state);
+    }
 
-    // Find highest-priority ready thread
+    // Cleanup exited threads first
+    struct thread **prev = &ready_queue;
+    while (*prev) {
+        if ((*prev)->state == STATE_EXITED) {
+            struct thread *dead = *prev;
+            *prev = dead->next_ready;
+            free_thread_stack(dead->stack);
+            kfree(dead);
+            DEBUG_TO_FILE("Cleaned up exited thread");
+        } else {
+            prev = &(*prev)->next_ready;
+        }
+    }
+
+    // Find highest-priority ready thread (skip duplicates)
     for (t = ready_queue; t != NULL; t = t->next_ready) {
         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
                      t->tid, t->priority, t->state);
-        if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
-            if (t == prev_thread) { // Skip the previously scheduled thread
-                continue;
-            }
+        
+        // Skip already-processed threads
+        if (t->state != STATE_READY || t == highest) continue;
+        
+        if (!highest || t->priority > highest->priority) {
             highest = t;
-            DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
+            DEBUG_TO_FILE("New candidate: thread %d", t->tid);
         }
     }
 
-    // Fallback to rootproc if no threads found
+    // Fallback to rootproc
     if (!highest) {
-        DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
+        DEBUG_TO_FILE("Falling back to rootproc");
         highest = rootproc->current_thread;
     }
 
-    // Check if the current thread is the same as the highest-priority thread
-    if (curproc->current_thread == highest) {
-        DEBUG_TO_FILE("Current thread is the same as the highest-priority thread.");
-        // If the current thread is in the STATE_YIELDING state, yield it
-        if (curproc->current_thread->state == STATE_YIELDING) {
-            DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
-                         curproc->current_thread->tid);
-            curproc->current_thread->state = STATE_READY;
-			prev_thread = curproc->current_thread; // Update prev_thread
-        }
-        return;
+    // Remove current thread from queue before demoting
+    if (curproc && curproc->current_thread && 
+        curproc->current_thread->state != STATE_YIELDING) 
+    {
+        remove_from_ready_queue(curproc->current_thread); // NEW
+        curproc->current_thread->state = STATE_READY;
+        add_to_ready_queue(curproc->current_thread); 
+        DEBUG_TO_FILE("Demoted thread %d", curproc->current_thread->tid);
     }
 
-    // Demote the current thread to READY state if it's not the highest-priority thread
-    if (curproc->current_thread->state != STATE_YIELDING) {
-		if (curproc->current_thread->state != STATE_READY) {
-			curproc->current_thread->state = STATE_READY;
-		}
-        DEBUG_TO_FILE("Demoting thread %d to READY", curproc->current_thread->tid);
-        add_to_ready_queue(curproc->current_thread);  // Re-add to ready queue
-    }
-
-    // Switch to the highest-priority thread
-	if (highest->state != STATE_YIELDING) {
-		highest->state = STATE_RUNNING;
-		highest->proc->current_thread = highest;
-		curproc = highest->proc;
-		DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
-		switch_to_thread(curproc->current_thread->proc, highest->proc);
-		prev_thread = highest; // Update prev_thread to point to the newly scheduled thread
-	} else {
-		// If the highest-priority thread is in the STATE_YIELDING state, 
-		// set its state to READY and continue scheduling
-		highest->state = STATE_READY; // Update state to READY
-		DEBUG_TO_FILE("Thread %d is in the STATE_YIELDING state. Continuing scheduling.", 
-					highest->tid);
-		prev_thread = NULL; // Reset prev_thread
-		// Skip this thread and move on to the next one
-		highest = NULL;
-		DEBUG_TO_FILE("Highest thread is NULL. Searching for next thread.");
-
-    }
-
-    // If no threads are available, yield the current thread
-    if (!highest) {
-        DEBUG_TO_FILE("No threads available. Yielding.");
+    // Switch to new thread
+    if (highest) {
+        highest->state = STATE_RUNNING;
+        curproc = highest->proc;
+        curproc->current_thread = highest;
+        DEBUG_TO_FILE("Switching to thread %d", highest->tid);
+        switch_to_thread(curproc->current_thread->proc, curproc);
+    } else {
+        DEBUG_TO_FILE("No threads available");
         sys_p_yield();
     }
-
-    // Check if the highest-priority thread is the same as the current thread
-    if (highest == curproc->current_thread) {
-        DEBUG_TO_FILE("Highest-priority thread is the same as the current thread.");
-        // If the highest-priority thread is in the STATE_YIELDING state, yield it
-        if (highest->state == STATE_YIELDING) {
-            DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
-                         highest->tid);
-            highest->state = STATE_READY;
-        }
-        return;
-    }
 }
+
+// void schedule(void) {
+//     struct thread *highest = NULL;
+//     struct thread *t;
+//     struct thread *prev_thread = NULL; // Keep track of the previously scheduled thread
+
+//     DEBUG_TO_FILE("----- Scheduler Invoked -----");
+//     DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
+//                  curproc->current_thread->tid, 
+//                  curproc->current_thread->priority,
+//                  curproc->current_thread->state);
+
+//     // Find highest-priority ready thread
+//     for (t = ready_queue; t != NULL; t = t->next_ready) {
+//         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
+//                      t->tid, t->priority, t->state);
+//         if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
+//             if (t == prev_thread) { // Skip the previously scheduled thread
+//                 continue;
+//             }
+//             highest = t;
+//             DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
+//         }
+//     }
+
+//     // Fallback to rootproc if no threads found
+//     if (!highest) {
+//         DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
+//         highest = rootproc->current_thread;
+//     }
+
+//     // Check if the current thread is the same as the highest-priority thread
+//     if (curproc->current_thread == highest) {
+//         DEBUG_TO_FILE("Current thread is the same as the highest-priority thread.");
+//         // If the current thread is in the STATE_YIELDING state, yield it
+//         if (curproc->current_thread->state == STATE_YIELDING) {
+//             DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
+//                          curproc->current_thread->tid);
+//             curproc->current_thread->state = STATE_READY;
+// 			prev_thread = curproc->current_thread; // Update prev_thread
+//         }
+//         return;
+//     }
+
+//     // Demote the current thread to READY state if it's not the highest-priority thread
+//     if (curproc->current_thread->state != STATE_YIELDING) {
+// 		if (curproc->current_thread->state != STATE_READY) {
+// 			curproc->current_thread->state = STATE_READY;
+// 		}
+//         DEBUG_TO_FILE("Demoting thread %d to READY", curproc->current_thread->tid);
+//         add_to_ready_queue(curproc->current_thread);  // Re-add to ready queue
+//     }
+
+//     // Switch to the highest-priority thread
+// 	if (highest->state != STATE_YIELDING) {
+// 		highest->state = STATE_RUNNING;
+// 		highest->proc->current_thread = highest;
+// 		highest->proc->p_time_quantum = time_slice;
+// 		curproc = highest->proc;
+// 		DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
+// 		switch_to_thread(curproc->current_thread->proc, highest->proc);
+// 		prev_thread = highest; // Update prev_thread to point to the newly scheduled thread
+// 	} else {
+// 		// If the highest-priority thread is in the STATE_YIELDING state, 
+// 		// set its state to READY and continue scheduling
+// 		highest->state = STATE_READY; // Update state to READY
+// 		DEBUG_TO_FILE("Thread %d is in the STATE_YIELDING state. Continuing scheduling.", 
+// 					highest->tid);
+// 		prev_thread = NULL; // Reset prev_thread
+// 		// Skip this thread and move on to the next one
+// 		highest = NULL;
+// 		DEBUG_TO_FILE("Highest thread is NULL. Searching for next thread.");
+
+//     }
+
+//     // If no threads are available, yield the current thread
+//     if (!highest) {
+//         DEBUG_TO_FILE("No threads available. Yielding.");
+//         sys_p_yield();
+//     }
+
+//     // Check if the highest-priority thread is the same as the current thread
+//     if (highest == curproc->current_thread) {
+//         DEBUG_TO_FILE("Highest-priority thread is the same as the current thread.");
+//         // If the highest-priority thread is in the STATE_YIELDING state, yield it
+//         if (highest->state == STATE_YIELDING) {
+//             DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
+//                          highest->tid);
+//             highest->state = STATE_READY;
+//         }
+//         return;
+//     }
+// }
 
 // Add a thread to a mutex's wait queue (sorted by priority)
 void add_to_wait_queue(struct thread **queue, struct thread *t)
@@ -404,40 +474,60 @@ void remove_from_wait_queue(struct thread **queue, struct thread *t) {
     }
 }
 
-/* Enhanced add_to_ready_queue() */
 void add_to_ready_queue(struct thread *t) {
-    if (!t || t->state != STATE_READY) {
-        DEBUG_TO_FILE("Rejecting thread %p state %d", t, t ? t->state : -1);
-        return;
+    if (!t || t->state != STATE_READY) return;
+
+    // Check for duplicates
+    struct thread *curr;
+    for (curr = ready_queue; curr; curr = curr->next_ready) {
+        if (curr == t) return;
     }
 
-    if (t->state != STATE_READY) {
-		t->state = STATE_READY;
-	}
-    DEBUG_TO_FILE("Adding thread %d (priority %d, state %d) to ready queue",
-                 t->tid, t->priority, t->state);
-
-    struct thread **curr;
-    // Find the correct position to insert (after threads with >= priority)
-    for (curr = &ready_queue; *curr; curr = &(*curr)->next_ready) {
-        if (t->priority > (*curr)->priority)
-            break;
+    // Insert by priority (descending order)
+    struct thread **prev = &ready_queue;
+    while (*prev && (*prev)->priority >= t->priority) {
+        prev = &(*prev)->next_ready;
     }
-    
-    // Traverse to the end of the same-priority group to append
-    while (*curr && (*curr)->priority == t->priority) {
-        curr = &(*curr)->next_ready;
-    }
-
-    t->next_ready = *curr;
-    *curr = t;
-
-    DEBUG_TO_FILE("Thread %d inserted at position %p", t->tid, curr);
+    t->next_ready = *prev;
+    *prev = t;
 }
 
+/* Enhanced add_to_ready_queue() */
+// void add_to_ready_queue(struct thread *t) {
+//     if (!t || t->state != STATE_READY) {
+//         DEBUG_TO_FILE("Rejecting thread %p state %d", t, t ? t->state : -1);
+//         return;
+//     }
+
+//     if (t->state != STATE_READY) {
+// 		t->state = STATE_READY;
+// 	}
+//     DEBUG_TO_FILE("Adding thread %d (priority %d, state %d) to ready queue",
+//                  t->tid, t->priority, t->state);
+
+//     struct thread **curr;
+//     // Find the correct position to insert (after threads with >= priority)
+//     for (curr = &ready_queue; *curr; curr = &(*curr)->next_ready) {
+//         if (t->priority > (*curr)->priority)
+//             break;
+//     }
+    
+//     // Traverse to the end of the same-priority group to append
+//     while (*curr && (*curr)->priority == t->priority) {
+//         curr = &(*curr)->next_ready;
+//     }
+
+//     t->next_ready = *curr;
+//     *curr = t;
+
+//     DEBUG_TO_FILE("Thread %d inserted at position %p", t->tid, curr);
+// }
+
 void remove_from_ready_queue(struct thread *t) {
+    if (!t) return;
+    
     struct thread **curr;
-    for (curr = &ready_queue; *curr != NULL; curr = &(*curr)->next_ready) {
+    for (curr = &ready_queue; *curr; curr = &(*curr)->next_ready) {
         if (*curr == t) {
             *curr = t->next_ready;
             t->next_ready = NULL;
@@ -445,6 +535,17 @@ void remove_from_ready_queue(struct thread *t) {
         }
     }
 }
+
+// void remove_from_ready_queue(struct thread *t) {
+//     struct thread **curr;
+//     for (curr = &ready_queue; *curr != NULL; curr = &(*curr)->next_ready) {
+//         if (*curr == t) {
+//             *curr = t->next_ready;
+//             t->next_ready = NULL;
+//             break;
+//         }
+//     }
+// }
 
 // Remove the highest-priority thread from a wait queue
 struct thread* remove_highest_priority(struct thread **queue)
@@ -519,7 +620,7 @@ void timer_interrupt_handler(void) {
 
 /* Mutex functions */
 /* Enhanced mutex operations */
-void mutex_lock(struct mutex *m) {
+void sys_p_mutex_lock(struct mutex *m) {
     DEBUG_TO_FILE("Thread %d attempting to lock mutex %p", 
                  curproc->current_thread->tid, m);
     
@@ -535,7 +636,7 @@ void mutex_lock(struct mutex *m) {
                  m, curproc->current_thread->tid);
 }
 
-void mutex_unlock(struct mutex *m) {
+void sys_p_mutex_unlock(struct mutex *m) {
     DEBUG_TO_FILE("Thread %d releasing mutex %p", 
                  curproc->current_thread->tid, m);
     
@@ -577,8 +678,22 @@ void mutex_init(struct mutex *m) {
 }
 
 void semaphore_init(struct semaphore *s, int count) {
-    s->count = count;
+    s->count = (long)count;
     s->wait_queue = NULL;
+}
+
+void semaphore_wait(struct semaphore *s) {
+    while (tas(&s->count) <= 0) {
+        add_to_wait_queue(&s->wait_queue, curproc->current_thread);
+        th_sleep();
+    }
+    s->count--;
+}
+
+void semaphore_post(struct semaphore *s) {
+    s->count++;
+    struct thread *t = remove_highest_priority(&s->wait_queue);
+    if (t) wakeup(t->proc);
 }
 
 long sys_p_tlscreate(void) {
@@ -662,49 +777,100 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     return t->tid;
 }
 
-long sys_p_createthread(void (*func)(void*), void *arg, void *stack) 
-{
+long sys_p_createthread(void (*func)(void*), void *arg, void *stack) {
     struct proc *p = curproc;
+    DEBUG_TO_FILE("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack);
 
-	DEBUG(("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack));
+	if (!timer_initialized) {
+		Jdisint(VBL);
+		old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+		Jenabint(VBL);
+		timer_initialized = 1;
+	}
 
     // First thread for this process
     if (!p->threads) {
-        // Initialize thread subsystem
-        if (!timer_initialized) {
-            Jdisint(VBL);
-            old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
-            Jenabint(VBL);
-            timer_initialized = 1;
-        }
-        
         // Create main thread
         p->threads = kmalloc(sizeof(struct thread));
+        if (!p->threads) return -ENOMEM;
+
         p->threads->tid = 0;
         p->threads->stack = p->stack;
         p->threads->next = NULL;
         p->num_threads = 1;
         p->p_state = STATE_RUNNING;
-        p->p_priority = 20;
-        p->threads->state = STATE_READY; // Set state
-		ready_queue = p->threads;
-		add_to_ready_queue(p->threads);
+        p->p_priority = 20; // Default priority
+        p->threads->state = STATE_READY;
+        p->current_thread = p->threads;
+        add_to_ready_queue(p->threads);
     }
-    
+
     // Create new thread
     struct thread *t = kmalloc(sizeof(struct thread));
-    t->stack = stack ? stack : allocate_thread_stack();
+    if (!t) return -ENOMEM;
+
+    // Align user-provided stack or allocate
+    t->stack = stack ? (void*)((unsigned long)stack & ~3) : allocate_thread_stack();
+    if (!t->stack) {
+        kfree(t);
+        return -ENOMEM;
+    }
+
     t->tid = p->num_threads++;
     t->proc = p;
-    t->priority = p->p_priority;
+    t->priority = (p->p_priority >= 0 && p->p_priority <= 31) ? p->p_priority : 20;
+    t->state = STATE_READY;
     t->next = p->threads;
     p->threads = t;
-    t->state = STATE_READY; // Set state
-    
+
     init_thread_stack(t, func, arg);
-    add_to_ready_queue(t); // Now passes STATE_READY check
+    add_to_ready_queue(t);
     return t->tid;
 }
+
+// long sys_p_createthread(void (*func)(void*), void *arg, void *stack) 
+// {
+//     struct proc *p = curproc;
+
+// 	DEBUG(("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack));
+
+//     // First thread for this process
+//     if (!p->threads) {
+//         // Initialize thread subsystem
+//         if (!timer_initialized) {
+//             Jdisint(VBL);
+//             old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+//             Jenabint(VBL);
+//             timer_initialized = 1;
+//         }
+        
+//         // Create main thread
+//         p->threads = kmalloc(sizeof(struct thread));
+//         p->threads->tid = 0;
+//         p->threads->stack = p->stack;
+//         p->threads->next = NULL;
+//         p->num_threads = 1;
+//         p->p_state = STATE_RUNNING;
+//         p->p_priority = 20;
+//         p->threads->state = STATE_READY; // Set state
+// 		ready_queue = p->threads;
+// 		add_to_ready_queue(p->threads);
+//     }
+    
+//     // Create new thread
+//     struct thread *t = kmalloc(sizeof(struct thread));
+//     t->stack = stack ? stack : allocate_thread_stack();
+//     t->tid = p->num_threads++;
+//     t->proc = p;
+//     t->priority = p->p_priority;
+//     t->next = p->threads;
+//     p->threads = t;
+//     t->state = STATE_READY; // Set state
+    
+//     init_thread_stack(t, func, arg);
+//     add_to_ready_queue(t); // Now passes STATE_READY check
+//     return t->tid;
+// }
 
 /* Syscalls */
 long sys_p_setpriority(long priority)
@@ -718,19 +884,21 @@ long sys_p_setpriority(long priority)
 long sys_p_yield(void)
 {
     struct thread *current = curproc->current_thread;
-	DEBUG_TO_FILE("Yielding thread %d. State changed from READY to YIELDING.", current->tid);
-
-    current->state = STATE_YIELDING;
+	// DEBUG_TO_FILE("Yielding thread %d. State changed from READY to YIELDING.", current->tid);
+    // current->state = STATE_YIELDING;
+	DEBUG_TO_FILE("Yielding thread %d. State changed to READY and adding to the queue.", current->tid);
+	current->state = STATE_READY;
     add_to_ready_queue(current); // Re-add to ready queue
     schedule();
     return 0;
 }
 
-long sys_exit(void) {
+long sys_p_exit(void) {
     struct proc *p = curproc;
     struct thread *current = p->current_thread;
     struct thread **t;
 
+	current->state = STATE_EXITED;
 	current->thread_flags |= THREAD_EXITING;
 	DEBUG_TO_FILE("Exiting thread %d from process %p", current->tid, p);
 
@@ -746,7 +914,7 @@ long sys_exit(void) {
     }
 
     // Free thread resources
-	DEBUG_TO_FILE("In sys_exit -> Before Calling free_thread_stack\n", current->tid);
+	DEBUG_TO_FILE("In sys_p_exit -> Before Calling free_thread_stack\n", current->tid);
     free_thread_stack(current->stack);
     kfree(current);
     p->num_threads--;
@@ -825,14 +993,16 @@ long sys_thread_cancel(int tid) {
 }
 
 void thread_cleanup(struct thread *t) {
-    struct proc *waiting;
-    // Cast to handle proc list with thread function (temporary fix)
-    while ((waiting = (struct proc *)remove_highest_priority((struct thread **)&t->waiting_procs))) {
-        wakeup(waiting);
-    }
-	DEBUG_TO_FILE("In thread_cleanup -> Before Calling free_thread_stack for thread %d\n", t->tid);
-    free_thread_stack(t->stack);
-    kfree(t);
+	if (t->state == STATE_EXITED) {
+		struct proc *waiting;
+		// Cast to handle proc list with thread function (temporary fix)
+		while ((waiting = (struct proc *)remove_highest_priority((struct thread **)&t->waiting_procs))) {
+			wakeup(waiting);
+		}
+		DEBUG_TO_FILE("In thread_cleanup -> Before Calling free_thread_stack for thread %d\n", t->tid);
+		free_thread_stack(t->stack);
+		kfree(t);
+	}
 }
 
 
@@ -989,7 +1159,7 @@ init_proc(void)
 	if (!rootproc->threads) 
 		DEBUG_TO_FILE("Cannot allocate main thread");
 
-	rootproc->p_time_quantum = 1;  // Very short quantum for kernel thread
+	rootproc->p_time_quantum = time_slice;
 	DEBUG_TO_FILE("Rootproc quantum set to %d", rootproc->p_time_quantum);
 
 	rootproc->threads->tid = 0;

@@ -86,7 +86,8 @@ terminate(struct proc *pcurproc, short code, short que)
 				if (!(t->state & THREAD_EXITING)) {
 					t = t->next;
 					continue;
-				}				
+				}
+				t->state = STATE_EXITED;
 				DEBUG_TO_FILE("In terminate() (k_exit.c) -> Terminating thread %d\n", t->tid);
 				struct thread *next = t->next;
 				if (t->join_queue) {

@@ -68,10 +68,12 @@ void wakeup(struct proc *p);
 extern void timer_interrupt_handler(void);
 void* allocate_thread_stack(void);
 void free_thread_stack(void *stack);
-void mutex_lock(struct mutex *m);
-void mutex_unlock(struct mutex *m);
+void sys_p_mutex_lock(struct mutex *m);
+void sys_p_mutex_unlock(struct mutex *m);
 void mutex_init(struct mutex *m);
 void semaphore_init(struct semaphore *s, int count);
+void semaphore_wait(struct semaphore *s);
+void semaphore_post(struct semaphore *s);
 void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg);
 
 long create_new_thread(struct proc *p, const struct thread_params *params);

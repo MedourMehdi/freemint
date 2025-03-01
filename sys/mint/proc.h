@@ -308,6 +308,8 @@ struct proc
 #define STATE_RUNNING   0
 #define STATE_BLOCKED   1
 #define STATE_READY   2
+#define STATE_YIELDING 3
+#define STATE_EXITED   4
 
 /* Process flags */
 #define PF_YIELD        0x0001  // Yield requested
@@ -364,7 +366,7 @@ struct thread {
 #define THREAD_EXITING     0x0004  // Thread is exiting
 
 struct semaphore {
-    int count;
+    volatile long count; 
 	struct thread *wait_queue;    // Threads waiting on semaphore
 };
 
@@ -392,7 +394,7 @@ long sys_p_tlscreate(void);
 long sys_p_tlsset(long key, void *value);
 long sys_p_tlsget(long key);
 long sys_p_createthread(void (*func)(void*), void *arg, void *stack);
-long sys_exit(void);
+long sys_p_exit(void);
 
 /* ToDo */
 long sys_thread_join(int tid, void **retval);
