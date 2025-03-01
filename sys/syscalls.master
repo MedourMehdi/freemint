@@ -519,16 +519,16 @@ opcode	ret	class name	args */
 0x181		Fchdir		(short fd) /* since 1.17 */
 0x182		Ffdopendir	(short fd) /* since 1.17 */
 0x183		Fdirfd		(long handle) /* since 1.17 */
-0x184	long	Psetpriority	(long priority)
+0x184	long	Pthreadsetpriority	(long priority)
 0x185	void	Pyield	(void)
 0x186	long	Ptlscreate	(void)
 0x187	long	Ptlsset	(long key, void *value)
 0x188	long	Ptlsget	(long key)
 0x189	long	Pcreatethread	(void *func, void *arg, void *stack)
 0x18a	long	Pexit	(void)
-0x18b		undefined
-0x18c		undefined
-0x184		undefined
+0x18b	long	Pmutex_lock	(long mutex_ptr)
+0x18c	long	Pmutex_unlock	(long mutex_ptr)
+0x18d	long	Pmutex_init	(void)
 0x185		undefined
 0x186		undefined
 0x187		undefined

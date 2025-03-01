@@ -619,8 +619,8 @@ void timer_interrupt_handler(void) {
 }
 
 /* Mutex functions */
-/* Enhanced mutex operations */
-void sys_p_mutex_lock(struct mutex *m) {
+long _cdecl sys_p_mutex_lock(long mutex_ptr) {
+	struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
     DEBUG_TO_FILE("Thread %d attempting to lock mutex %p", 
                  curproc->current_thread->tid, m);
     
@@ -634,9 +634,11 @@ void sys_p_mutex_lock(struct mutex *m) {
     m->owner = curproc->current_thread; // Assign thread, not proc
     DEBUG_TO_FILE("Mutex %p acquired by thread %d", 
                  m, curproc->current_thread->tid);
+	return 0; // Success
 }
 
-void sys_p_mutex_unlock(struct mutex *m) {
+long _cdecl sys_p_mutex_unlock(long mutex_ptr) {
+	struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
     DEBUG_TO_FILE("Thread %d releasing mutex %p", 
                  curproc->current_thread->tid, m);
     
@@ -648,6 +650,7 @@ void sys_p_mutex_unlock(struct mutex *m) {
 		m->owner = next;
         wakeup(next->proc);
     }
+	return 0; // Success
 }
 
 /* Thread stack management */
@@ -671,10 +674,30 @@ void free_thread_stack(void *stack)
 	}
 }
 
-void mutex_init(struct mutex *m) {
+/**
+ * sys_p_mutex_init:
+ * Initialize a new mutex and return a handle to it.
+ *
+ * The handle is a kernel address cast to a long, and can be used in
+ * sys_p_mutex_lock and sys_p_mutex_unlock.
+ *
+ * Returns:
+ *  A handle to the new mutex on success, -ENOMEM on failure.
+ *
+ * See also:
+ *  sys_p_mutex_lock
+ *  sys_p_mutex_unlock
+ */
+long _cdecl sys_p_mutex_init(void) {
+    struct kernel_mutex *m = kmalloc(sizeof(struct kernel_mutex));
+    if (!m) return -ENOMEM;
+
     m->locked = 0;
     m->owner = NULL;
     m->wait_queue = NULL;
+
+    // Return the kernel address as a handle (cast to long)
+    return (long)m;
 }
 
 void semaphore_init(struct semaphore *s, int count) {
@@ -696,18 +719,18 @@ void semaphore_post(struct semaphore *s) {
     if (t) wakeup(t->proc);
 }
 
-long sys_p_tlscreate(void) {
+long _cdecl sys_p_tlscreate(void) {
     if (tls_next_key >= THREAD_TLS_KEYS) return -ENOMEM;
     return tls_next_key++;
 }
 
-long sys_p_tlsset(long key, void *value) {
+long _cdecl sys_p_tlsset(long key, void *value) {
     if (key < 0 || key >= THREAD_TLS_KEYS) return -EINVAL;
     curproc->threads->tls[key] = value;
     return 0;
 }
 
-long sys_p_tlsget(long key) {
+long _cdecl sys_p_tlsget(long key) {
     if (key < 0 || key >= THREAD_TLS_KEYS) return -EINVAL;
     return (long)curproc->threads->tls[key];
 }
@@ -777,7 +800,7 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     return t->tid;
 }
 
-long sys_p_createthread(void (*func)(void*), void *arg, void *stack) {
+long _cdecl sys_p_createthread(void (*func)(void*), void *arg, void *stack) {
     struct proc *p = curproc;
     DEBUG_TO_FILE("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack);
 
@@ -873,7 +896,7 @@ long sys_p_createthread(void (*func)(void*), void *arg, void *stack) {
 // }
 
 /* Syscalls */
-long sys_p_setpriority(long priority)
+long _cdecl sys_p_threadsetpriority(long priority)
 {
 	struct proc *p = curproc;
 	if (priority < 0 || priority > 31) return -EINVAL;
@@ -881,7 +904,7 @@ long sys_p_setpriority(long priority)
 	return 0;
 }
 
-long sys_p_yield(void)
+long _cdecl sys_p_yield(void)
 {
     struct thread *current = curproc->current_thread;
 	// DEBUG_TO_FILE("Yielding thread %d. State changed from READY to YIELDING.", current->tid);
@@ -893,7 +916,7 @@ long sys_p_yield(void)
     return 0;
 }
 
-long sys_p_exit(void) {
+long _cdecl sys_p_exit(void) {
     struct proc *p = curproc;
     struct thread *current = p->current_thread;
     struct thread **t;

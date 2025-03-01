@@ -370,7 +370,7 @@ struct semaphore {
 	struct thread *wait_queue;    // Threads waiting on semaphore
 };
 
-struct mutex {
+struct kernel_mutex {
     volatile long locked;
     struct thread *owner;          // Change from proc to thread
     struct thread *wait_queue;     // Change to thread queue
@@ -388,13 +388,16 @@ struct mutex {
 #define SYS_thread_cancel 0x18c
 
 /* Threads function prototypes */
-long sys_p_setpriority(long priority);
-long sys_p_yield(void);
-long sys_p_tlscreate(void);
-long sys_p_tlsset(long key, void *value);
-long sys_p_tlsget(long key);
-long sys_p_createthread(void (*func)(void*), void *arg, void *stack);
-long sys_p_exit(void);
+long _cdecl sys_p_threadsetpriority(long priority);
+long _cdecl sys_p_yield(void);
+long _cdecl sys_p_tlscreate(void);
+long _cdecl sys_p_tlsset(long key, void *value);
+long _cdecl sys_p_tlsget(long key);
+long _cdecl sys_p_createthread(void (*func)(void*), void *arg, void *stack);
+long _cdecl sys_p_exit(void);
+long _cdecl sys_p_mutex_lock(long mutex_ptr);
+long _cdecl sys_p_mutex_unlock(long mutex_ptr);
+long _cdecl sys_p_mutex_init(void);
 
 /* ToDo */
 long sys_thread_join(int tid, void **retval);

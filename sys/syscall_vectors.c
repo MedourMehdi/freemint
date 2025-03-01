@@ -520,7 +520,7 @@ Func dos_tab [DOS_MAX] =
 	/* 0x181 */	(Func)	sys_f_chdir,	/* 1.17 */
 	/* 0x182 */	(Func)	sys_f_opendir,	/* 1.17 */
 	/* 0x183 */		sys_f_dirfd,	/* 1.17 */
-	/* 0x184 */		sys_p_setpriority,
+	/* 0x184 */		sys_p_threadsetpriority,
 	/* 0x185 */		sys_p_yield,
 	/* 0x186 */		sys_p_tlscreate,
 	/* 0x187 */		sys_p_tlsset,
@@ -529,7 +529,7 @@ Func dos_tab [DOS_MAX] =
 	/* 0x18a */		sys_p_exit,
 	/* 0x18b */		sys_p_mutex_lock,
 	/* 0x18c */		sys_p_mutex_unlock,
-	/* 0x18d */		sys_enosys,		/* reserved */
+	/* 0x18d */		sys_p_mutex_init,
 	/* 0x18e */		sys_enosys,		/* reserved */
 	/* 0x18f */		sys_enosys,		/* reserved */
 
