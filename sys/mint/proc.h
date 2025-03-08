@@ -305,11 +305,11 @@ struct proc
 };
 
 /* Process states */
-#define STATE_RUNNING   0
-#define STATE_BLOCKED   1
-#define STATE_READY   2
-#define STATE_YIELDING 3
-#define STATE_EXITED   4
+#define STATE_INIT      0
+#define STATE_READY     1
+#define STATE_RUNNING   2
+#define STATE_BLOCKED   3
+#define STATE_EXITED    4
 
 /* Process flags */
 #define PF_YIELD        0x0001  // Yield requested
@@ -344,6 +344,8 @@ struct thread {
     struct proc *proc;           // Parent process
     struct thread *next;         // Next thread in list
     void *stack;                 // Stack base address
+    void *stack_base;     // Start of allocated stack (including guard page)
+    void *stack_top;      // Top of usable stack area	
     short priority;              // Priority (0-31)
     void *tls[THREAD_TLS_KEYS];  // Thread-local storage
     void **tls_ptr;              // Pointer to TLS array (for assembly)
@@ -358,6 +360,8 @@ struct thread {
     short state;                 // Thread state (RUNNING/READY/BLOCKED)
 
 	struct context ctxt;
+
+	short time_quantum;
 };
 
 /* Thread flags */

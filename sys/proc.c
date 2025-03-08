@@ -47,9 +47,30 @@
 # include "xbios.h"
 
 #define VBL 28
-#define THREAD_STACK_SIZE  (8 * 1024)    // 8 KB default stack
-#define GUARD_PAGE_SIZE    0             // Disabled for now
 // #define STACK_MAGIC        0xDEADBEEF    // Sentinel value for overflow detection
+/* Stack boundaries and configuration */
+#define STACK_SIZE       (16 * 1024)     // 16KB default stack size
+#define STACK_MIN_SIZE   (4 * 1024)      // 4KB minimum stack size
+#define STACK_ALIGN      16              // Stack alignment requirement
+
+/* Stack boundary definitions */
+#define STACK_MIN_ADDR   0x00001000      // Lowest valid stack address
+#define STACK_MAX_ADDR   0x7FFFFFFF      // Highest valid stack address
+
+/* Stack guard page size */
+#define GUARD_PAGE_SIZE  4096            // 4KB guard page
+#ifdef __mcoldfire__
+#define SR_IPL_MASK    0x2700
+#define SR_SUPER_MASK  0x2000
+#define SET_IPL(sr)    "move.w #0x2700,%%sr"
+#else
+#define SR_IPL_MASK    0x0700
+#define SR_SUPER_MASK  0x2000
+#define SET_IPL(sr)    "ori.w #0x0700,%%sr"
+#endif
+
+/* Process iteration macro */
+#define for_each_proc(p) for (p = proclist; p != NULL; p = p->p_next)
 
 /*
  * We initialize proc_clock to a very large value so that we don't have
@@ -80,7 +101,16 @@ struct proc *_cdecl get_curproc(void) { return curproc; }
 static int timer_initialized = 0;
 
 void exit_thread(void);
-long _cdecl sys_thread_yield(void);
+void debug_ready_queue(void);
+void verify_ready_queue(void);
+bool verify_user_access(void *addr, size_t size);
+
+// void thread_safe_switch(struct proc *from, struct proc *to);
+void thread_safe_switch(struct thread *from, struct thread *to);
+bool verify_context(struct context *ctx, void *stack_base, void *stack_top);
+bool verify_context_switch(struct thread *from, struct thread *to);
+
+struct thread *get_thread_from_stack_pointer(void *stack_ptr);
 
 // Define debug_to_file function
 void debug_to_file(const char *filename, const char *fmt, ...) {
@@ -123,334 +153,537 @@ void exit_thread(void) {
     sys_p_exit();
 }
 
-/**
- * Initializes the stack for a new thread.
- * 
- * This function sets up the initial stack frame and context for a new thread
- * to start execution. It aligns the stack pointer, sets up a simulated 
- * function call frame with a return address and argument, and initializes 
- * the thread's context with the entry point function and stack pointer.
- * 
- * @param t A pointer to the thread structure to initialize.
- * @param entry The function to execute when the thread starts.
- * @param arg The argument to pass to the entry function.
- */
-void init_thread_stack(struct thread *t, void (*entry)(void*), void *arg) 
+void add_to_ready_queue(struct thread *t) 
 {
-    DEBUG_TO_FILE("init_thread_stack: entry=%p, arg=%p, stack_top=%p", 
-        entry, arg, (char *)t->stack + THREAD_STACK_SIZE);
+    if (!t) return;
 
-    /* Get aligned stack top */
-    unsigned long *sp = (unsigned long*)((char*)t->stack + THREAD_STACK_SIZE);
-    sp = (unsigned long*)((unsigned long)sp & ~3);
+    DEBUG_TO_FILE("ADD_TO_READY_Q: Thread %d (pri %d, state %d)", 
+                 t->tid, t->priority, t->state);
+    DEBUG_TO_FILE("Current ready_queue ptr: %p", ready_queue);
 
-	t->stack = sp;
-    /* Create initial stack frame to mimic function call (argument + return address) */
-#ifdef __mcoldfire__
-    /* ColdFire: Push argument and return address */
-    sp -= 2;  // Space for argument and return address
-    sp[1] = (long)arg;          // Argument
-    sp[0] = (long)exit_thread;  // Return address after function returns
-#else
-    /* Standard m68k: Push argument and return address */
-    sp -= 2;
-    sp[1] = (long)arg;
-    sp[0] = (long)exit_thread;
-#endif
+    // Check if already in queue
+    struct thread *iter = ready_queue;
+    while (iter) {
+        if (iter == t) {
+            DEBUG_TO_FILE("Thread %d already in queue", t->tid);
+            return;
+        }
+        iter = iter->next_ready;
+    }
 
-    /* Set up thread context */
-    t->ctxt.usp = (unsigned long)sp;   // Stack pointer points to return address
-    t->ctxt.pc = (unsigned long)entry; // Start execution at the entry function
-    t->ctxt.sr = 0x0000;              // User mode
+    // Add to end of same priority group
+    struct thread **pp = &ready_queue;
+    while (*pp && (*pp)->priority >= t->priority) {
+        DEBUG_TO_FILE("Checking thread %d (pri %d)", 
+                     (*pp)->tid, (*pp)->priority);
+        pp = &(*pp)->next_ready;
+    }
+    
+    t->next_ready = *pp;
+    *pp = t;
 
-    DEBUG_TO_FILE("Thread %d: USP=0x%lx PC=0x%lx", 
-        t->tid, t->ctxt.usp, t->ctxt.pc);
+    DEBUG_TO_FILE("Added thread %d to ready queue (pri %d)", t->tid, t->priority);
+    DEBUG_TO_FILE("New ready_queue ptr: %p", ready_queue);
+    debug_ready_queue();
 }
 
-void switch_to_thread(struct proc *from, struct proc *to) {
-    // Allow 'from' to be NULL for initial switch
-    if (!to || !to->current_thread) {
-        DEBUG_TO_FILE("Invalid switch_to_thread: to=%p", to);
+void schedule(void)
+{
+    DEBUG_TO_FILE("----- SCHEDULE START -----");
+    debug_ready_queue();
+
+    if (!curproc || !curproc->current_thread) {
+        DEBUG_TO_FILE("No current process/thread!");
         return;
     }
 
+    struct thread *current = curproc->current_thread;
+    
+    // Only switch if we have threads in ready queue
+    if (!ready_queue) {
+        DEBUG_TO_FILE("No threads in ready queue");
+        return;
+    }
+
+    // Get next thread to run - make sure it's actually READY
+    struct thread *selected = ready_queue;
+    while (selected && (selected->state != STATE_READY || selected == current)) {
+        selected = selected->next_ready;
+    }
+
+    if (!selected) {
+        DEBUG_TO_FILE("----- SCHEDULE END (no eligible thread) -----");
+        return;
+    }
+
+    DEBUG_TO_FILE("[SCHED] Switching from thread %d to thread %d", 
+                 current->tid, selected->tid);
+
+    // Remove selected thread from ready queue
+    remove_from_ready_queue(selected);
+    
+    // Do the switch
+    thread_safe_switch(current, selected);
+
+    DEBUG_TO_FILE("----- SCHEDULE END -----");
+}
+
+void thread_safe_switch(struct thread *from, struct thread *to)
+{
+    if (!to || from == to) return;
+
+    DEBUG_TO_FILE("Thread switch: %d -> %d", from->tid, to->tid);
+    
+    // Save current context
     if (from) {
-		DEBUG_TO_FILE("Before save_context -> thread %d", from->current_thread->tid);
-        save_context(&from->current_thread->ctxt);
-			DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
-            return; // Return from context switch
-        // if (save_context(&from->current_thread->ctxt)) {
-		// 	DEBUG_TO_FILE("Returning to thread %d after context switch", from->current_thread->tid);
-        //     return; // Return from context switch
-        // }
+        save_context(&from->ctxt);
+        from->state = STATE_READY;
     }
 
-    // Critical: Ensure supervisor stack is valid before switch
-	DEBUG_TO_FILE("Before change_context -> Switched to thread %d", to->current_thread->tid);
-    change_context(&to->current_thread->ctxt);
-    DEBUG_TO_FILE("After change_context -> Switched to thread %d", to->current_thread->tid);
-    DEBUG_TO_FILE("Context switch: thread %d -> %d", 
-		from ? from->current_thread->tid : -1, 
-		to->current_thread->tid);
-	DEBUG_TO_FILE("Switching to thread %d: (ctxt.regs[8]) A0=0x%lx", 
-		to->current_thread->tid, to->current_thread->ctxt.regs[8]);
-	DEBUG_TO_FILE("Switching to thread %d: PC=0x%lx, SP=0x%lx, SR=0x%x", 
-		to->current_thread->tid, 
-		to->current_thread->ctxt.pc,
-		to->current_thread->ctxt.usp,
-		to->current_thread->ctxt.sr);	
-}
+    // Prepare new thread
+    to->state = STATE_RUNNING;
+    curproc->current_thread = to;
 
-/* Process iteration macro */
-#define for_each_proc(p) for (p = proclist; p != NULL; p = p->p_next)
-
-long _cdecl sys_thread_yield(void) {
-    struct proc *p = get_curproc();
-    if (p && p->current_thread) {
-        p->current_thread->state = STATE_READY;
-        add_to_ready_queue(p->current_thread);
-        schedule();
+    // Set up proper kernel exit frame if going to user mode
+    if (!(to->ctxt.sr & SR_SUPER_MASK)) {
+        // Ensure even alignment and space for frame
+        unsigned short *sp = (unsigned short *)((to->ctxt.ssp - 6) & ~1L);
+        
+        // Set up frame in CORRECT ORDER for 68000 RTE instruction:
+        *(sp + 0) = 0x0000;                              // SR first
+        *(sp + 1) = (unsigned short)(to->ctxt.pc >> 16);  // PC high
+        *(sp + 2) = (unsigned short)(to->ctxt.pc);        // PC low
+        
+        to->ctxt.ssp = (long)sp;  // Point to start of frame
+        
+        DEBUG_TO_FILE("Stack frame at 0x%lx:", (long)sp);
+        DEBUG_TO_FILE("  SR=0x0000");
+        DEBUG_TO_FILE("  PC=0x%lx", to->ctxt.pc);
+        DEBUG_TO_FILE("  Frame size=6 bytes");
+        DEBUG_TO_FILE("  SSP=0x%lx", to->ctxt.ssp);
+        
+        // Ensure proper domain
+        curproc->domain = DOM_TOS;
+        
+        leave_kernel();
     }
-    return E_OK;
+
+    change_context(&to->ctxt);
 }
 
-/**
- * Select highest-priority ready thread and switch to it.
- *
- * This function is the heart of the MiNT scheduler. It iterates over the ready
- * queue and selects the highest-priority thread that isn't currently running.
- * If such a thread is found, the function switches to it by calling
- * switch_to_thread.
- *
- * The function also sets the time quantum for the newly scheduled thread to 10.
- *
- * If no thread is ready, the function does nothing.
- */
 
-/* Modified schedule() with detailed logging */
-// void schedule(void) {
-//     struct thread *highest = NULL;
-//     struct thread *t;
+// void thread_safe_switch(struct thread *from, struct thread *to)
+// {
+//     if (!to || from == to) return;
 
-//     DEBUG_TO_FILE("----- Scheduler Invoked -----");
-//     DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
-//                  curproc->current_thread->tid, 
-//                  curproc->current_thread->priority,
-//                  curproc->current_thread->state);
+//     DEBUG_TO_FILE("Thread switch: %d -> %d", from->tid, to->tid);
+//     DEBUG_TO_FILE("FROM thread state: PC=0x%lx USP=0x%lx SR=0x%04x SSP=0x%lx", 
+//                  from->ctxt.pc, from->ctxt.usp, from->ctxt.sr, from->ctxt.ssp);
+//     DEBUG_TO_FILE("TO thread state: PC=0x%lx USP=0x%lx SR=0x%04x SSP=0x%lx", 
+//                  to->ctxt.pc, to->ctxt.usp, to->ctxt.sr, to->ctxt.ssp);
+    
+//     unsigned short sr = splhigh();
 
-//     // Find highest-priority ready thread
-//     for (t = ready_queue; t != NULL; t = t->next_ready) {
-//         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
-//                      t->tid, t->priority, t->state);
-// 		if (curproc->current_thread->state == STATE_READY) {
-// 			// Current thread is already in READY state, don't demote it again
-// 			continue;
-// 		}
-//         if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
-//             highest = t;
-//             DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
-//         }
+//     // Save current context
+//     if (from) {
+//         DEBUG_TO_FILE("Saving context for thread %d", from->tid);
+//         save_context(&from->ctxt);
+//         from->state = STATE_READY;
+//         DEBUG_TO_FILE("After save: PC=0x%lx USP=0x%lx SR=0x%04x SSP=0x%lx", 
+//                      from->ctxt.pc, from->ctxt.usp, from->ctxt.sr, from->ctxt.ssp);
 //     }
 
-//     // Fallback to rootproc if no threads found
-//     if (!highest) {
-//         DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
-//         highest = rootproc->current_thread;
-//     }
+//     // Prepare new thread
+//     to->state = STATE_RUNNING;
+//     curproc->current_thread = to;
 
-//     if (highest) {
-//         struct proc *next_proc = highest->proc;
-//         struct thread *prev_thread = curproc->current_thread;
-
-//         // Rotate threads if same priority (round-robin)
-//         if (prev_thread && highest->priority == prev_thread->priority) {
-//             DEBUG_TO_FILE("Round-robin for priority %d", highest->priority);
-//             remove_from_ready_queue(prev_thread);
-//             add_to_ready_queue(prev_thread);
+//     // Set up proper kernel exit frame if going to user mode
+//     if (!(to->ctxt.sr & SR_SUPER_MASK)) {
+//         DEBUG_TO_FILE("Setting up user mode transition for thread %d", to->tid);
+        
+//         // Ensure stack alignment
+//         to->ctxt.ssp = (to->ctxt.ssp - 4) & ~3L;
+//         long *sp = (long *)to->ctxt.ssp;
+        
+//         // Verify stack space
+//         if ((char *)sp - (char *)to->stack < 256) {
+//             DEBUG_TO_FILE("Stack overflow risk detected!");
+//             return;
 //         }
 
-//         // Demote previous thread to READY
-//         if (prev_thread) {
-//             prev_thread->state = STATE_READY;
-//             DEBUG_TO_FILE("Demoting thread %d to READY", prev_thread->tid);
-//             add_to_ready_queue(prev_thread);  // Re-add to ready queue
-//         }
-
-//         // Switch to the new thread
-//         highest->state = STATE_RUNNING;
-//         next_proc->current_thread = highest;
-//         curproc = next_proc;
-//         DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
-//         switch_to_thread(prev_thread ? prev_thread->proc : NULL, next_proc);
-//     } else {
-//         DEBUG_TO_FILE("No threads available. Yielding.");
-//         sys_p_yield();
+//         // Set up minimal frame
+//         *(--sp) = to->ctxt.pc;    // Return PC
+//         *(--sp) = 0x0000;         // Initial SR (user mode)
+        
+//         // Save new stack pointer
+//         to->ctxt.ssp = (long)sp;
+        
+//         DEBUG_TO_FILE("Stack frame setup:");
+//         DEBUG_TO_FILE("  PC=0x%lx", to->ctxt.pc);
+//         DEBUG_TO_FILE("  SR=0x%04x", to->ctxt.sr);
+//         DEBUG_TO_FILE("  SSP=0x%lx", to->ctxt.ssp);
+//         DEBUG_TO_FILE("  USP=0x%lx", to->ctxt.usp);
+        
+//         // Ensure proper domain
+//         curproc->domain = DOM_TOS;
+        
+//         DEBUG_TO_FILE("Before leave_kernel");
+//         leave_kernel();
+//         DEBUG_TO_FILE("After leave_kernel");  // Should not see this
 //     }
+
+//     DEBUG_TO_FILE("Before change_context");
+//     // Verify context before switch
+//     if (!verify_context(&to->ctxt, to->stack_base, to->stack_top)) {
+//         DEBUG_TO_FILE("Invalid context detected!");
+//         return;
+//     }
+    
+//     change_context(&to->ctxt);
+//     DEBUG_TO_FILE("After change_context");  // Should not see this
+
+//     spl(sr);
 // }
 
-void schedule(void) {
-    struct thread *highest = NULL;
-    struct thread *t;
 
-    DEBUG_TO_FILE("----- Scheduler Invoked -----");
-    if (curproc && curproc->current_thread) {
-        DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
-                     curproc->current_thread->tid, 
-                     curproc->current_thread->priority,
-                     curproc->current_thread->state);
+bool verify_context(struct context *ctx, void *stack_base, void *stack_top) {
+    if (!ctx) {
+        DEBUG_TO_FILE("NULL context pointer");
+        return false;
     }
 
-    // Cleanup exited threads first
-    struct thread **prev = &ready_queue;
-    while (*prev) {
-        if ((*prev)->state == STATE_EXITED) {
-            struct thread *dead = *prev;
-            *prev = dead->next_ready;
-            free_thread_stack(dead->stack);
-            kfree(dead);
-            DEBUG_TO_FILE("Cleaned up exited thread");
-        } else {
-            prev = &(*prev)->next_ready;
+    // Basic register validation
+    if (ctx->pc < 0x1000) {
+        DEBUG_TO_FILE("Invalid PC: 0x%08lx", ctx->pc);
+        return false;
+    }
+
+    // On 68000: stack grows DOWN
+    // stack_base is LOW address
+    // stack_top is HIGH address
+    // USP should be between them
+    unsigned long base = (unsigned long)stack_base;  // Low address
+    unsigned long top = (unsigned long)stack_top;    // High address
+    unsigned long usp = ctx->usp;
+
+    if (usp < base || usp > top) {
+        DEBUG_TO_FILE("Stack pointer out of bounds:");
+        DEBUG_TO_FILE("  Stack base (low): 0x%08lx", base);
+        DEBUG_TO_FILE("  Stack top (high): 0x%08lx", top);
+        DEBUG_TO_FILE("  USP: 0x%08lx", usp);
+        return false;
+    }
+
+    return true;
+}
+
+
+bool verify_context_switch(struct thread *from, struct thread *to)
+{
+    DEBUG_TO_FILE("Verifying context switch:");
+    
+    if (from) {
+        DEBUG_TO_FILE("  From thread %d:", from->tid);
+        if (!verify_context(&from->ctxt, from->stack_base, from->stack_top)) {
+            DEBUG_TO_FILE("  Source context invalid");
+            return false;
         }
     }
+    
+    DEBUG_TO_FILE("  To thread %d:", to->tid);
+    if (!verify_context(&to->ctxt, to->stack_base, to->stack_top)) {
+        DEBUG_TO_FILE("  Target context invalid");
+        return false;
+    }
+    
+    return true;
+}
 
-    // Find highest-priority ready thread (skip duplicates)
-    for (t = ready_queue; t != NULL; t = t->next_ready) {
-        DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
-                     t->tid, t->priority, t->state);
+void init_thread_stack(struct thread *t, void (*func)(void*), void *arg)
+{
+    DEBUG_TO_FILE("Init thread %d stack", t->tid);
+    
+    // Clear context
+    memset(&t->ctxt, 0, sizeof(struct context));
+
+    // Ensure even alignment for 68000
+    unsigned long stack_top = ((unsigned long)t->stack + STACK_SIZE) & ~1L;
+    
+    // Set up user stack - ensure even alignment and leave space
+    unsigned short *usp = (unsigned short *)(stack_top - 64);
+    
+    // Push initial values in correct order for 68000
+    *(--usp) = (unsigned short)((unsigned long)arg);        // Argument low
+    *(--usp) = (unsigned short)((unsigned long)arg >> 16);  // Argument high
+    *(--usp) = (unsigned short)((unsigned long)exit_thread);        // Return low
+    *(--usp) = (unsigned short)((unsigned long)exit_thread >> 16);  // Return high
+    
+    // Set up supervisor stack with space for frame
+    unsigned short *ssp = (unsigned short *)(stack_top - 256);
+    
+    // Set up context
+    t->ctxt.pc = (long)func;
+    t->ctxt.usp = (long)usp;
+    t->ctxt.sr = 0x0000;        // User mode
+    t->ctxt.ssp = (long)ssp;
+    
+    DEBUG_TO_FILE("Thread %d context:", t->tid);
+    DEBUG_TO_FILE("  PC=0x%lx", t->ctxt.pc);
+    DEBUG_TO_FILE("  USP=0x%lx", t->ctxt.usp);
+    DEBUG_TO_FILE("  SR=0x%04x", t->ctxt.sr);
+    DEBUG_TO_FILE("  SSP=0x%lx", t->ctxt.ssp);
+    DEBUG_TO_FILE("  Stack check:");
+    DEBUG_TO_FILE("    Stack base: 0x%lx", (unsigned long)t->stack);
+    DEBUG_TO_FILE("    Stack top: 0x%lx", stack_top);
+    DEBUG_TO_FILE("    USP aligned: %s", (t->ctxt.usp & 1) ? "no" : "yes");
+    DEBUG_TO_FILE("    SSP aligned: %s", (t->ctxt.ssp & 1) ? "no" : "yes");
+    
+    t->state = STATE_READY;
+}
+
+
+// void init_thread_stack(struct thread *t, void (*func)(void*), void *arg)
+// {
+//     DEBUG_TO_FILE("Init thread %d stack", t->tid);
+    
+//     // Clear context
+//     memset(&t->ctxt, 0, sizeof(struct context));
+
+//     char *stack_base = (char *)t->stack;
+    
+//     // Calculate stack positions - ensure proper alignment
+//     unsigned long ssp = (unsigned long)(stack_base + STACK_SIZE - 16) & ~3UL;
+//     unsigned long usp = (unsigned long)(t->stack_top) & ~3UL;
+
+//     // Set up initial register state
+//     t->ctxt.regs[15] = (long)arg;        // D7 = argument
+//     t->ctxt.regs[14] = 0;                // D6
+//     t->ctxt.regs[13] = 0;                // D5
+//     t->ctxt.regs[8] = (long)exit_thread; // A0 = return address
+
+//     // Set up supervisor stack frame
+//     long *ssp_ptr = (long *)ssp;
+//     *(--ssp_ptr) = (long)func;           // Initial PC
+//     *(--ssp_ptr) = 0x0000;              // Initial SR (user mode)
+//     *(--ssp_ptr) = usp;                 // Initial USP
+
+//     // Set up user stack frame
+//     long *usp_ptr = (long *)usp;
+//     *(--usp_ptr) = (long)arg;           // Push argument
+//     *(--usp_ptr) = (long)exit_thread;   // Return address
+//     *(--usp_ptr) = 0;                   // Frame pointer
+
+//     // Initialize context structure
+//     t->ctxt.pc = (long)func;
+//     t->ctxt.usp = (long)usp_ptr;
+//     t->ctxt.sr = 0x0000;               // User mode
+//     t->ctxt.ssp = (long)ssp_ptr;
+//     t->ctxt.term_vec = 0x102;          // GEMDOS terminate vector
+//     t->ctxt.sfmt = 0x0000;             // Normal frame format
+
+//     t->state = STATE_READY;
+
+//     DEBUG_TO_FILE("Thread %d context initialized:", t->tid);
+//     DEBUG_TO_FILE("  PC=0x%lx", t->ctxt.pc);
+//     DEBUG_TO_FILE("  USP=0x%lx", t->ctxt.usp);
+//     DEBUG_TO_FILE("  SR=0x%04x", t->ctxt.sr);
+//     DEBUG_TO_FILE("  SSP=0x%lx", t->ctxt.ssp);
+// }
+
+bool verify_user_access(void *addr, size_t size) {
+    unsigned long start = (unsigned long)addr;
+    unsigned long end = start + size;
+    
+    // Check alignment
+    if (start & 1) return false;
+    
+    // Check address range
+    if (start < 0x1000 || end > 0x1000000) return false;
+    
+    return true;
+}
+
+void switch_to_thread(struct proc *from, struct proc *to) {
+    // Validate input parameters
+    if (!to) {
+        DEBUG_TO_FILE("Invalid switch_to_thread: to proc is NULL");
+        return;
+    }
+    if (!to->current_thread) {
+        DEBUG_TO_FILE("Invalid switch_to_thread: to proc %p has no current thread", to);
+        return;
+    }
+
+    if (from == to) {
+        DEBUG_TO_FILE("Not switching to same thread");
+        return;
+    }
+
+    // Validate thread states
+    struct thread *from_thread = from ? from->current_thread : NULL;
+    struct thread *to_thread = to->current_thread;
+    
+    if (!to_thread) {
+        DEBUG_TO_FILE("Invalid switch_to_thread: to_thread is NULL");
+        return;
+    }
+
+    // Log the switch attempt
+    DEBUG_TO_FILE("Switch request:");
+    if (from_thread) {
+        DEBUG_TO_FILE("  From: Thread %d (PC=0x%08lx, USP=0x%08lx)", 
+                     from_thread->tid,
+                     from_thread->ctxt.pc,
+                     from_thread->ctxt.usp);
+    } else {
+        DEBUG_TO_FILE("  From: NULL");
+    }
+    
+    DEBUG_TO_FILE("  To: Thread %d (PC=0x%08lx, USP=0x%08lx)",
+                 to_thread->tid,
+                 to_thread->ctxt.pc,
+                 to_thread->ctxt.usp);
+
+    if (from_thread == to_thread) {
+        DEBUG_TO_FILE("Skipping switch to same thread");
+        return;
+    }
+
+    // Verify thread contexts
+    if (!verify_context_switch(from_thread, to_thread)) {
+        DEBUG_TO_FILE("Context switch verification failed");
+        return;
+    }
+
+    // Save current context if there is one
+    if (from_thread) {
+        unsigned short old_sr;
+        asm volatile ("move.w %%sr,%0" : "=d" (old_sr));
+        #ifdef __mcoldfire__
+        asm volatile ("move.w #0x2700,%%sr" : : : "cc");
+        #else
+        asm volatile ("ori.w #0x0700,%%sr" : : : "cc");
+        #endif
         
-        // Skip already-processed threads
-        if (t->state != STATE_READY || t == highest) continue;
-        
-        if (!highest || t->priority > highest->priority) {
-            highest = t;
-            DEBUG_TO_FILE("New candidate: thread %d", t->tid);
+        if (save_context(&from_thread->ctxt)) {
+            DEBUG_TO_FILE("Returned from context save in thread %d", from_thread->tid);
+            asm volatile ("move.w %0,%%sr" : : "d" (old_sr));
+            return;
         }
-    }
-
-    // Fallback to rootproc
-    if (!highest) {
-        DEBUG_TO_FILE("Falling back to rootproc");
-        highest = rootproc->current_thread;
-    }
-
-    // Remove current thread from queue before demoting
-    if (curproc && curproc->current_thread && 
-        curproc->current_thread->state != STATE_YIELDING) 
-    {
-        remove_from_ready_queue(curproc->current_thread); // NEW
-        curproc->current_thread->state = STATE_READY;
-        add_to_ready_queue(curproc->current_thread); 
-        DEBUG_TO_FILE("Demoted thread %d", curproc->current_thread->tid);
+        
+        from_thread->state = STATE_READY;
     }
 
     // Switch to new thread
-    if (highest) {
-        highest->state = STATE_RUNNING;
-        curproc = highest->proc;
-        curproc->current_thread = highest;
-        DEBUG_TO_FILE("Switching to thread %d", highest->tid);
-        switch_to_thread(curproc->current_thread->proc, curproc);
-    } else {
-        DEBUG_TO_FILE("No threads available");
-        sys_p_yield();
+    to_thread->state = STATE_RUNNING;
+    curproc = to;
+
+    // Verify context before switch
+    verify_context(&to_thread->ctxt, to_thread->stack_base, to_thread->stack_top);
+    
+    change_context(&to_thread->ctxt);
+}
+
+void debug_ready_queue(void) {
+    DEBUG_TO_FILE("Ready queue contents:");
+    if (!ready_queue) {
+        DEBUG_TO_FILE("  <empty>");
+        return;
+    }
+
+    struct thread *t = ready_queue;
+    while (t) {
+        DEBUG_TO_FILE("  Thread %d (pri=%d, state=%d)", 
+                     t->tid, t->priority, t->state);
+        t = t->next_ready;  // Use next_ready
     }
 }
 
-// void schedule(void) {
-//     struct thread *highest = NULL;
-//     struct thread *t;
-//     struct thread *prev_thread = NULL; // Keep track of the previously scheduled thread
+void verify_ready_queue(void) {
+    DEBUG_TO_FILE("Verifying ready queue integrity:");
+    
+    if (!ready_queue) {
+        DEBUG_TO_FILE("  Queue is empty");
+        return;
+    }
 
-//     DEBUG_TO_FILE("----- Scheduler Invoked -----");
-//     DEBUG_TO_FILE("Current thread: %d (pri %d, state %d)", 
-//                  curproc->current_thread->tid, 
-//                  curproc->current_thread->priority,
-//                  curproc->current_thread->state);
+    struct thread *curr = ready_queue;
+    int count = 0;
+    int last_priority = 31;
+    struct thread *last = NULL;
+    
+    while (curr && count < 32) {
+        // Check state
+        if (curr->state != STATE_READY) {
+            DEBUG_TO_FILE("  ERROR: Thread %d has invalid state %d",
+                         curr->tid, curr->state);
+        }
+        
+        // Check priority ordering
+        if (curr->priority > last_priority) {
+            DEBUG_TO_FILE("  ERROR: Priority inversion: thread %d (pri=%d) > %d",
+                         curr->tid, curr->priority, last_priority);
+        }
+        
+        // Check for loops
+        if (curr->next_ready == curr) {
+            DEBUG_TO_FILE("  ERROR: Self-loop detected at thread %d",
+                         curr->tid);
+            break;
+        }
+        
+        last_priority = curr->priority;
+        last = curr;
+        curr = curr->next_ready;
+        count++;
+    }
+    
+    if (count >= 32) {
+        DEBUG_TO_FILE("  ERROR: Possible circular reference detected");
+    }
+    
+    // Verify last node
+    if (last && last->next_ready != NULL) {
+        DEBUG_TO_FILE("  ERROR: Last node has non-NULL next pointer");
+    }
+}
 
-//     // Find highest-priority ready thread
-//     for (t = ready_queue; t != NULL; t = t->next_ready) {
-//         DEBUG_TO_FILE("Evaluating thread %d (pri %d, state %d)", 
-//                      t->tid, t->priority, t->state);
-//         if (t->state == STATE_READY && (!highest || t->priority > highest->priority) && t->proc->num_threads > 0) {
-//             if (t == prev_thread) { // Skip the previously scheduled thread
-//                 continue;
-//             }
-//             highest = t;
-//             DEBUG_TO_FILE("New candidate: thread %d (pri %d)", t->tid, t->priority);
-//         }
-//     }
+void timer_interrupt_handler(void)
+{
+    // Check if interrupts are disabled
+    unsigned short sr;
+    asm volatile ("move.w %%sr,%0" : "=d" (sr));
+    if (sr & 0x0700) {  // Check interrupt mask
+        return;
+    }
 
-//     // Fallback to rootproc if no threads found
-//     if (!highest) {
-//         DEBUG_TO_FILE("No threads in ready queue. Falling back to rootproc.");
-//         highest = rootproc->current_thread;
-//     }
+    if (!curproc || !curproc->current_thread) return;
+    
+    struct thread *current = curproc->current_thread;
+    
+    DEBUG_TO_FILE("[TIMER] Tick for thread %d (Q=%d)", 
+                 current->tid, current->time_quantum);
 
-//     // Check if the current thread is the same as the highest-priority thread
-//     if (curproc->current_thread == highest) {
-//         DEBUG_TO_FILE("Current thread is the same as the highest-priority thread.");
-//         // If the current thread is in the STATE_YIELDING state, yield it
-//         if (curproc->current_thread->state == STATE_YIELDING) {
-//             DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
-//                          curproc->current_thread->tid);
-//             curproc->current_thread->state = STATE_READY;
-// 			prev_thread = curproc->current_thread; // Update prev_thread
-//         }
-//         return;
-//     }
+    if (current->time_quantum > 0) {
+        current->time_quantum--;
+        if (current->time_quantum <= 0) {
+            DEBUG_TO_FILE("Thread %d quantum expired", current->tid);
+            
+            sr = splhigh();
+            
+            // Force a schedule when quantum expires
+            current->state = STATE_READY;
+            add_to_ready_queue(current);
+            current->time_quantum = time_slice; // Reset quantum
+            
+            schedule();
+            
+            spl(sr);
+        }
+    }
+    timer_ticks++;
+}
 
-//     // Demote the current thread to READY state if it's not the highest-priority thread
-//     if (curproc->current_thread->state != STATE_YIELDING) {
-// 		if (curproc->current_thread->state != STATE_READY) {
-// 			curproc->current_thread->state = STATE_READY;
-// 		}
-//         DEBUG_TO_FILE("Demoting thread %d to READY", curproc->current_thread->tid);
-//         add_to_ready_queue(curproc->current_thread);  // Re-add to ready queue
-//     }
-
-//     // Switch to the highest-priority thread
-// 	if (highest->state != STATE_YIELDING) {
-// 		highest->state = STATE_RUNNING;
-// 		highest->proc->current_thread = highest;
-// 		highest->proc->p_time_quantum = time_slice;
-// 		curproc = highest->proc;
-// 		DEBUG_TO_FILE("Switching to thread %d (pri %d)", highest->tid, highest->priority);
-// 		switch_to_thread(curproc->current_thread->proc, highest->proc);
-// 		prev_thread = highest; // Update prev_thread to point to the newly scheduled thread
-// 	} else {
-// 		// If the highest-priority thread is in the STATE_YIELDING state, 
-// 		// set its state to READY and continue scheduling
-// 		highest->state = STATE_READY; // Update state to READY
-// 		DEBUG_TO_FILE("Thread %d is in the STATE_YIELDING state. Continuing scheduling.", 
-// 					highest->tid);
-// 		prev_thread = NULL; // Reset prev_thread
-// 		// Skip this thread and move on to the next one
-// 		highest = NULL;
-// 		DEBUG_TO_FILE("Highest thread is NULL. Searching for next thread.");
-
-//     }
-
-//     // If no threads are available, yield the current thread
-//     if (!highest) {
-//         DEBUG_TO_FILE("No threads available. Yielding.");
-//         sys_p_yield();
-//     }
-
-//     // Check if the highest-priority thread is the same as the current thread
-//     if (highest == curproc->current_thread) {
-//         DEBUG_TO_FILE("Highest-priority thread is the same as the current thread.");
-//         // If the highest-priority thread is in the STATE_YIELDING state, yield it
-//         if (highest->state == STATE_YIELDING) {
-//             DEBUG_TO_FILE("Yielding thread %d. State changed from YIELDING to READY.", 
-//                          highest->tid);
-//             highest->state = STATE_READY;
-//         }
-//         return;
-//     }
-// }
-
-// Add a thread to a mutex's wait queue (sorted by priority)
 void add_to_wait_queue(struct thread **queue, struct thread *t)
 {
 	struct thread **curr;
@@ -461,9 +694,6 @@ void add_to_wait_queue(struct thread **queue, struct thread *t)
 	*curr = t;
 }
 
-/**
- * Removes a thread from a wait queue.
- */
 void remove_from_wait_queue(struct thread **queue, struct thread *t) {
     struct thread **curr;
     for (curr = queue; *curr != NULL; curr = &(*curr)->next) { // Use 'next'
@@ -474,80 +704,25 @@ void remove_from_wait_queue(struct thread **queue, struct thread *t) {
     }
 }
 
-void add_to_ready_queue(struct thread *t) {
-    if (!t || t->state != STATE_READY) return;
-
-    // Check for duplicates
-    struct thread *curr;
-    for (curr = ready_queue; curr; curr = curr->next_ready) {
-        if (curr == t) return;
-    }
-
-    // Insert by priority (descending order)
-    struct thread **prev = &ready_queue;
-    while (*prev && (*prev)->priority >= t->priority) {
-        prev = &(*prev)->next_ready;
-    }
-    t->next_ready = *prev;
-    *prev = t;
-}
-
-/* Enhanced add_to_ready_queue() */
-// void add_to_ready_queue(struct thread *t) {
-//     if (!t || t->state != STATE_READY) {
-//         DEBUG_TO_FILE("Rejecting thread %p state %d", t, t ? t->state : -1);
-//         return;
-//     }
-
-//     if (t->state != STATE_READY) {
-// 		t->state = STATE_READY;
-// 	}
-//     DEBUG_TO_FILE("Adding thread %d (priority %d, state %d) to ready queue",
-//                  t->tid, t->priority, t->state);
-
-//     struct thread **curr;
-//     // Find the correct position to insert (after threads with >= priority)
-//     for (curr = &ready_queue; *curr; curr = &(*curr)->next_ready) {
-//         if (t->priority > (*curr)->priority)
-//             break;
-//     }
-    
-//     // Traverse to the end of the same-priority group to append
-//     while (*curr && (*curr)->priority == t->priority) {
-//         curr = &(*curr)->next_ready;
-//     }
-
-//     t->next_ready = *curr;
-//     *curr = t;
-
-//     DEBUG_TO_FILE("Thread %d inserted at position %p", t->tid, curr);
-// }
-
 void remove_from_ready_queue(struct thread *t) {
     if (!t) return;
-    
-    struct thread **curr;
-    for (curr = &ready_queue; *curr; curr = &(*curr)->next_ready) {
-        if (*curr == t) {
-            *curr = t->next_ready;
-            t->next_ready = NULL;
-            break;
+
+    DEBUG_TO_FILE("REMOVE_FROM_READY_Q: Thread %d", t->tid);
+    debug_ready_queue();
+
+    struct thread **pp = &ready_queue;
+    while (*pp) {
+        if (*pp == t) {
+            *pp = t->next_ready;  // Remove from list
+            t->next_ready = NULL; // Clear next pointer
+            DEBUG_TO_FILE("Removed thread %d from ready queue", t->tid);
+            debug_ready_queue();
+            return;
         }
+        pp = &(*pp)->next_ready;
     }
 }
 
-// void remove_from_ready_queue(struct thread *t) {
-//     struct thread **curr;
-//     for (curr = &ready_queue; *curr != NULL; curr = &(*curr)->next_ready) {
-//         if (*curr == t) {
-//             *curr = t->next_ready;
-//             t->next_ready = NULL;
-//             break;
-//         }
-//     }
-// }
-
-// Remove the highest-priority thread from a wait queue
 struct thread* remove_highest_priority(struct thread **queue)
 {
 	struct thread *highest = *queue;
@@ -566,15 +741,6 @@ void th_sleep(void)
 	schedule();
 }
 
-/**
- * Wake up a sleeping thread.
- *
- * Given a struct proc pointer, remove its current thread from its wait queue
- * and add it to the ready queue.
- *
- * @param p The struct proc containing the thread to wake up.
- */
-
 void wakeup(struct proc *p) {
     if (p && p->current_thread) {
         remove_from_wait_queue(&p->current_thread->wait_queue, p->current_thread);
@@ -582,112 +748,8 @@ void wakeup(struct proc *p) {
     }
 }
 
-void timer_interrupt_handler(void) {
-	DEBUG_TO_FILE("Timer interrupt occurred\n");
-    DEBUG_TO_FILE("=== Timer tick %lu ===", timer_ticks);
-    timer_ticks++;
-
-    if (!curproc || !curproc->current_thread) {
-        DEBUG_TO_FILE("No current thread!");
-        // Schedule immediately if no current thread
-        schedule();		
-        return;
-    }
-
-    // Decrement quantum for current thread
-    if (curproc->p_time_quantum > 0) {
-        curproc->p_time_quantum--;
-        DEBUG_TO_FILE("Thread %d quantum: %d", 
-                     curproc->current_thread->tid, 
-                     curproc->p_time_quantum);
-    }
-
-    if (curproc->p_time_quantum <= 0 || (curproc->p_flags & PF_YIELD)) {
-        DEBUG_TO_FILE("Quantum expired for thread %d", 
-                     curproc->current_thread->tid);
-        curproc->p_flags &= ~PF_YIELD;
-        
-        // Set the THREAD's state to READY, not the process's
-        curproc->current_thread->state = STATE_READY; // <-- CRITICAL FIX
-        
-        DEBUG_TO_FILE("Re-queuing thread %d", 
-                     curproc->current_thread->tid);
-        add_to_ready_queue(curproc->current_thread);
-        
-        schedule();
-    }
-}
-
 /* Mutex functions */
-long _cdecl sys_p_mutex_lock(long mutex_ptr) {
-	struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
-    DEBUG_TO_FILE("Thread %d attempting to lock mutex %p", 
-                 curproc->current_thread->tid, m);
-    
-    while (tas(&m->locked)) {
-        DEBUG_TO_FILE("Thread %d waiting on mutex %p", 
-                     curproc->current_thread->tid, m);
-		add_to_wait_queue(&m->wait_queue, curproc->current_thread);
-        th_sleep();
-    }
-    
-    m->owner = curproc->current_thread; // Assign thread, not proc
-    DEBUG_TO_FILE("Mutex %p acquired by thread %d", 
-                 m, curproc->current_thread->tid);
-	return 0; // Success
-}
 
-long _cdecl sys_p_mutex_unlock(long mutex_ptr) {
-	struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
-    DEBUG_TO_FILE("Thread %d releasing mutex %p", 
-                 curproc->current_thread->tid, m);
-    
-    m->locked = 0;
-    m->owner = NULL;
-    struct thread *next = remove_highest_priority(&m->wait_queue); // Correct type
-    
-    if (next) {
-		m->owner = next;
-        wakeup(next->proc);
-    }
-	return 0; // Success
-}
-
-/* Thread stack management */
-void* allocate_thread_stack(void)
-{
-	DEBUG_TO_FILE("allocate_thread_stack occurred\n");
-	void *stack = kmalloc(THREAD_STACK_SIZE + GUARD_PAGE_SIZE);
-	if (!stack) return NULL;
-
-	unsigned long *stack_top = (unsigned long *)((char*)stack + GUARD_PAGE_SIZE + THREAD_STACK_SIZE - 4);
-	*stack_top = STACK_MAGIC; // Sentinel
-	return (char*)stack + GUARD_PAGE_SIZE;
-}
-
-void free_thread_stack(void *stack)
-{
-	if (stack) {
-		DEBUG_TO_FILE("free_thread_stack occurred\n");
-		void *base = (char*)stack - GUARD_PAGE_SIZE;
-		kfree(base);
-	}
-}
-
-/**
- * sys_p_mutex_init:
- * Initialize a new mutex and return a handle to it.
- *
- * The handle is a kernel address cast to a long, and can be used in
- * sys_p_mutex_lock and sys_p_mutex_unlock.
- *
- * Returns:
- *  A handle to the new mutex on success, -ENOMEM on failure.
- *
- * See also:
- *  sys_p_mutex_lock
- *  sys_p_mutex_unlock
- */
 long _cdecl sys_p_mutex_init(void) {
     struct kernel_mutex *m = kmalloc(sizeof(struct kernel_mutex));
     if (!m) return -ENOMEM;
@@ -698,6 +760,119 @@ long _cdecl sys_p_mutex_init(void) {
 
     // Return the kernel address as a handle (cast to long)
     return (long)m;
+}
+
+long _cdecl sys_p_mutex_lock(long mutex_ptr)
+{
+    struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
+    struct thread *current = curproc->current_thread;
+    
+    DEBUG_TO_FILE("Thread %d attempting to lock mutex %p", 
+                 current->tid, m);
+
+    while (tas(&m->locked)) {
+        DEBUG_TO_FILE("Thread %d blocking on mutex %p (owner=%d)", 
+                     current->tid, m,
+                     m->owner ? m->owner->tid : -1);
+        
+        current->state = STATE_BLOCKED;
+        add_to_wait_queue(&m->wait_queue, current);
+        schedule();
+    }
+
+    m->owner = current;
+    DEBUG_TO_FILE("Mutex %p acquired by thread %d", m, current->tid);
+    return 0;
+}
+
+long _cdecl sys_p_mutex_unlock(long mutex_ptr)
+{
+    struct kernel_mutex *m = (struct kernel_mutex *)mutex_ptr;
+    struct thread *current = curproc->current_thread;
+
+    DEBUG_TO_FILE("mutex_unlock: thread %d releasing %p", 
+                 current->tid, m);
+
+    if (m->owner != current) {
+        DEBUG_TO_FILE("mutex_unlock: thread %d doesn't own mutex!", current->tid);
+        return -EPERM;
+    }
+
+    unsigned short sr = splhigh();
+    m->locked = 0;
+    m->owner = NULL;
+
+    // Wake highest priority waiter
+    struct thread *waiter = remove_highest_priority(&m->wait_queue);
+    if (waiter) {
+        DEBUG_TO_FILE("mutex_unlock: waking thread %d", waiter->tid);
+        waiter->state = STATE_READY;
+        add_to_ready_queue(waiter);
+        
+        if (waiter->priority > current->priority) {
+            DEBUG_TO_FILE("mutex_unlock: priority boost needed");
+            schedule();
+        }
+    }
+
+    spl(sr);
+    return 0;
+}
+
+
+/* Thread stack management */
+void* allocate_thread_stack(void) {
+    DEBUG_TO_FILE("allocate_thread_stack occurred\n");
+    void *base = kmalloc(STACK_SIZE + GUARD_PAGE_SIZE);
+    if (!base) return NULL;
+
+    // Set stack_base to start of allocated block
+    void *usable_stack = (char*)base + GUARD_PAGE_SIZE;
+
+    // Set sentinel at the end of the usable stack
+    unsigned long *stack_top = (unsigned long *)((char*)usable_stack + STACK_SIZE - 4);
+    *stack_top = STACK_MAGIC; 
+
+    return usable_stack; // This becomes thread->stack
+}
+
+struct thread *get_thread_from_stack_pointer(void *stack_ptr) {
+    if (stack_ptr == NULL) {
+        // Handle error: invalid stack pointer
+        return NULL;
+    }
+
+    // Get current stack pointer if none provided
+    if (stack_ptr == NULL) {
+        asm volatile("move.l %%a7,%0" : "=r" (stack_ptr));
+    }
+
+    // Search through all threads to find which stack range contains this pointer
+    struct proc *p = curproc;
+    if (!p) return NULL;
+
+    struct thread *t = p->threads;
+    while (t) {
+        // Check if stack_ptr is within this thread's stack bounds
+        // Remember stack grows DOWN, so stack_top < stack_ptr < stack_base
+        if (stack_ptr >= t->stack_top && stack_ptr <= t->stack_base) {
+            return t;
+        }
+        t = t->next;
+    }
+
+    return NULL;
+}
+
+void free_thread_stack(void *stack)
+{
+    if (stack) {
+        DEBUG_TO_FILE("free_thread_stack occurred\n");
+        struct thread *t = get_thread_from_stack_pointer(stack);
+        if (t->stack_base) {
+            kfree(t->stack_base); // Free the entire block (base includes guard)
+        }
+    }
 }
 
 void semaphore_init(struct semaphore *s, int count) {
@@ -713,10 +888,29 @@ void semaphore_wait(struct semaphore *s) {
     s->count--;
 }
 
-void semaphore_post(struct semaphore *s) {
+void semaphore_post(struct semaphore *s)
+{
+    struct thread *current = curproc->current_thread;
+    
+    DEBUG_TO_FILE("sem_post: thread %d incrementing sem %p", 
+                 current->tid, s);
+
+    unsigned short sr = splhigh();
     s->count++;
-    struct thread *t = remove_highest_priority(&s->wait_queue);
-    if (t) wakeup(t->proc);
+    
+    struct thread *waiter = remove_highest_priority(&s->wait_queue);
+    if (waiter) {
+        DEBUG_TO_FILE("sem_post: waking thread %d", waiter->tid);
+        waiter->state = STATE_READY;
+        add_to_ready_queue(waiter);
+        
+        if (waiter->priority > current->priority) {
+            DEBUG_TO_FILE("sem_post: priority inversion prevented");
+            schedule();
+        }
+    }
+    
+    spl(sr);
 }
 
 long _cdecl sys_p_tlscreate(void) {
@@ -783,9 +977,11 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     t->priority = p->p_priority;  // Inherit parent's priority
     DEBUG_TO_FILE("Thread %d created with priority %d (parent proc %d)", 
                  t->tid, t->priority, p->pid);
+                 t->time_quantum = time_slice + (t->priority / 4); // Set based on priority
+                 DEBUG_TO_FILE("New thread %d created with quantum %d", t->tid, t->time_quantum);                 
 	t->state = STATE_READY; 
     t->next = p->threads;
-	t->proc->p_time_quantum = time_slice; // Or a default value like 5
+
     p->threads = t;
 
     DEBUG_TO_FILE("New thread %d created. Stack: %p, Entry: %p", 
@@ -800,119 +996,127 @@ long create_new_thread(struct proc *p, const struct thread_params *params) {
     return t->tid;
 }
 
-long _cdecl sys_p_createthread(void (*func)(void*), void *arg, void *stack) {
-    struct proc *p = curproc;
-    DEBUG_TO_FILE("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack);
-
-	if (!timer_initialized) {
-		Jdisint(VBL);
-		old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
-		Jenabint(VBL);
-		timer_initialized = 1;
-	}
-
-    // First thread for this process
-    if (!p->threads) {
-        // Create main thread
-        p->threads = kmalloc(sizeof(struct thread));
-        if (!p->threads) return -ENOMEM;
-
-        p->threads->tid = 0;
-        p->threads->stack = p->stack;
-        p->threads->next = NULL;
-        p->num_threads = 1;
-        p->p_state = STATE_RUNNING;
-        p->p_priority = 20; // Default priority
-        p->threads->state = STATE_READY;
-        p->current_thread = p->threads;
-        add_to_ready_queue(p->threads);
+/* Syscalls */
+long sys_p_createthread(void (*func)(void*), void *arg, void *stack)
+{
+    if (!timer_initialized) {
+        DEBUG_TO_FILE("Initializing timer subsystem");
+        Jdisint(VBL);
+        old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
+        Jenabint(VBL);
+        timer_initialized = 1;
     }
 
-    // Create new thread
+    DEBUG_TO_FILE("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack);
+    
+    if (!func) return -EINVAL;
+
+    struct proc *p = curproc;
+    if (!p) return -EINVAL;
+
     struct thread *t = kmalloc(sizeof(struct thread));
     if (!t) return -ENOMEM;
 
-    // Align user-provided stack or allocate
-    t->stack = stack ? (void*)((unsigned long)stack & ~3) : allocate_thread_stack();
-    if (!t->stack) {
-        kfree(t);
-        return -ENOMEM;
-    }
-
+    // Basic initialization
+    memset(t, 0, sizeof(struct thread));
     t->tid = p->num_threads++;
     t->proc = p;
-    t->priority = (p->p_priority >= 0 && p->p_priority <= 31) ? p->p_priority : 20;
-    t->state = STATE_READY;
-    t->next = p->threads;
-    p->threads = t;
+    t->priority = p->current_thread->priority;
+    t->time_quantum = time_slice;
+    t->state = STATE_INIT;
+    
+    // Initialize queue links
+    t->next_ready = NULL;  // For ready queue
+    t->next = p->threads;  // Link into process thread list
+    p->threads = t;        // Add to front of process thread list
 
+    // Stack setup
+    if (!stack) {
+        t->stack = allocate_thread_stack();
+        if (!t->stack) {
+            kfree(t);
+            return -ENOMEM;
+        }
+        t->stack_base = t->stack;
+        t->stack_top = (char*)t->stack + STACK_SIZE;
+    } else {
+        t->stack = stack;
+        t->stack_base = stack;
+        t->stack_top = (char*)stack + STACK_SIZE;
+    }
+
+    // Initialize thread context and stack
     init_thread_stack(t, func, arg);
+
+    // Add to ready queue
     add_to_ready_queue(t);
+
     return t->tid;
 }
 
-// long sys_p_createthread(void (*func)(void*), void *arg, void *stack) 
-// {
-//     struct proc *p = curproc;
+long _cdecl sys_p_threadsetpriority(long priority) {
+    struct thread *current = curproc->current_thread;
+    if (!current || priority < 0 || priority > 31) {
+        return -EINVAL;
+    }
 
-// 	DEBUG(("sys_p_createthread: func=%p arg=%p stack=%p", func, arg, stack));
+    DEBUG_TO_FILE("SET_PRIORITY: Thread %d: %d -> %ld", 
+                 current->tid, current->priority, priority);
 
-//     // First thread for this process
-//     if (!p->threads) {
-//         // Initialize thread subsystem
-//         if (!timer_initialized) {
-//             Jdisint(VBL);
-//             old_timer = (void *)Setexc(VBL, (long)timer_interrupt_handler);
-//             Jenabint(VBL);
-//             timer_initialized = 1;
-//         }
-        
-//         // Create main thread
-//         p->threads = kmalloc(sizeof(struct thread));
-//         p->threads->tid = 0;
-//         p->threads->stack = p->stack;
-//         p->threads->next = NULL;
-//         p->num_threads = 1;
-//         p->p_state = STATE_RUNNING;
-//         p->p_priority = 20;
-//         p->threads->state = STATE_READY; // Set state
-// 		ready_queue = p->threads;
-// 		add_to_ready_queue(p->threads);
-//     }
+    // Save old priority
+    int old_priority = current->priority;
+
+    DEBUG_TO_FILE("[PRI] Thread %d: Old=%d, New=%d", 
+        current->tid, current->priority, priority);
+
+    // Update priority
+    current->priority = priority;
+    curproc->p_priority = priority;
+
+    DEBUG_TO_FILE("Thread %d priority updated: %d -> %d", 
+                 current->tid, old_priority, current->priority);
+
+    // // Force reschedule if running
+    // if (current->state == STATE_RUNNING) {
+    //     current->state = STATE_READY;
+    //     add_to_ready_queue(current);
+    //     schedule();
+    // }
     
-//     // Create new thread
-//     struct thread *t = kmalloc(sizeof(struct thread));
-//     t->stack = stack ? stack : allocate_thread_stack();
-//     t->tid = p->num_threads++;
-//     t->proc = p;
-//     t->priority = p->p_priority;
-//     t->next = p->threads;
-//     p->threads = t;
-//     t->state = STATE_READY; // Set state
-    
-//     init_thread_stack(t, func, arg);
-//     add_to_ready_queue(t); // Now passes STATE_READY check
-//     return t->tid;
-// }
-
-/* Syscalls */
-long _cdecl sys_p_threadsetpriority(long priority)
-{
-	struct proc *p = curproc;
-	if (priority < 0 || priority > 31) return -EINVAL;
-	p->p_priority = priority;
-	return 0;
+    return 0;
 }
 
 long _cdecl sys_p_yield(void)
 {
-    struct thread *current = curproc->current_thread;
-	// DEBUG_TO_FILE("Yielding thread %d. State changed from READY to YIELDING.", current->tid);
-    // current->state = STATE_YIELDING;
-	DEBUG_TO_FILE("Yielding thread %d. State changed to READY and adding to the queue.", current->tid);
-	current->state = STATE_READY;
-    add_to_ready_queue(current); // Re-add to ready queue
+    struct proc *p = curproc;
+    if (!p || !p->current_thread) {
+        DEBUG_TO_FILE("sys_p_yield: invalid current process/thread");
+        return -EINVAL;
+    }
+
+    DEBUG_TO_FILE("sys_p_yield: thread %d (pri %d) yielding", 
+                 p->current_thread->tid, p->current_thread->priority);
+
+    unsigned short sr = splhigh();
+    
+    struct thread *current = p->current_thread;
+    
+    // Save user context if in user mode
+    if (!(current->ctxt.sr & SR_SUPER_MASK)) {
+        save_context(&current->ctxt);  // Use build_context for user mode
+    }
+
+    // Remove from ready queue if present
+    remove_from_ready_queue(current);
+    
+    // Add to end of ready queue
+    current->state = STATE_READY;
+    add_to_ready_queue(current);
+    
+    // Force schedule
     schedule();
+    
+    spl(sr);
     return 0;
 }
 
@@ -1170,32 +1374,58 @@ init_proc(void)
 	rootproc->logbase = (void *) TRAP_Logbase();
 	rootproc->criticerr = *((long _cdecl (**)(long)) 0x404L);
 
-    // rootproc->threads = NULL;
-    // rootproc->num_threads = 0;
-    // rootproc->p_state = 0;
-    // rootproc->p_priority = 0;
-    // rootproc->p_time_quantum = 0;
-    // rootproc->p_flags = 0;
+    // Initialize main thread for MiNT (rootproc)
+    rootproc->threads = kmalloc(sizeof(struct thread));
+    if (!rootproc->threads) {
+        DEBUG_TO_FILE("Cannot allocate main thread");
+        return;
+    }
 
-	// Initialize main thread for MiNT (rootproc)
-	rootproc->threads = kmalloc(sizeof(struct thread));
-	if (!rootproc->threads) 
-		DEBUG_TO_FILE("Cannot allocate main thread");
+    struct thread *main_thread = rootproc->threads;
+    main_thread->tid = 0;
+    main_thread->stack = rootproc->stack;
+    // For 68000: stack grows DOWN, so stack_base is higher than stack_top
+    // CORRECTED: For stack growing DOWN
+    main_thread->stack_base = rootproc->stack;                    // Low address
+    main_thread->stack_top = (char *)rootproc->stack + STKSIZE; 
+    main_thread->state = STATE_READY;
+    main_thread->proc = rootproc;
+    main_thread->priority = rootproc->pri;  // Inherit process priority
+    main_thread->time_quantum = 5 + (main_thread->priority / 4); // Initial quantum
+    rootproc->num_threads = 1;
+    rootproc->current_thread = main_thread;
 
-	rootproc->p_time_quantum = time_slice;
-	DEBUG_TO_FILE("Rootproc quantum set to %d", rootproc->p_time_quantum);
+    // Initialize context structure
+    struct context *ctx = &main_thread->ctxt;
+    memset(ctx, 0, sizeof(struct context));
 
-	rootproc->threads->tid = 0;
-	rootproc->threads->stack = rootproc->stack;
-	rootproc->threads->state = STATE_READY;
-	rootproc->threads->proc = rootproc;
-	rootproc->threads->priority = 10; 
-	rootproc->num_threads = 1;
-	rootproc->current_thread = rootproc->threads;
+    // Set up initial context for root thread
+    ctx->pc = (unsigned long)rootproc->sysstack;  // Current execution point
+    ctx->usp = rootproc->sysstack;               // Current stack pointer
+    ctx->sr = 0x2000;                            // Supervisor mode
+    ctx->sfmt = 0x0000;                          // Normal frame format
+    ctx->term_vec = *(unsigned long *)0x408;     // GEMDOS terminate vector
+    
+    // Store current registers
+    asm volatile (
+        "movem.l %%d0-%%d7/%%a0-%%a6,%0"
+        : "=m" (ctx->regs[0])
+        :
+        : "memory"
+    );
 
-	// Set up initial context (adjust entry point as needed)
-	init_thread_stack(rootproc->threads, (void(*)(void*))0x63680000, NULL);
-	add_to_ready_queue(rootproc->threads);
+    DEBUG_TO_FILE("Root thread context initialized:");
+    DEBUG_TO_FILE("  PC=0x%lx", ctx->pc);
+    DEBUG_TO_FILE("  USP=0x%lx", ctx->usp);
+    DEBUG_TO_FILE("  SR=0x%x", ctx->sr);
+    DEBUG_TO_FILE("  Stack range: 0x%lx - 0x%lx",
+                 (unsigned long)main_thread->stack,
+                 (unsigned long)main_thread->stack + STKSIZE);
+
+    rootproc->p_time_quantum = time_slice;
+
+    // Add to ready queue
+    add_to_ready_queue(main_thread);
 }
 
 /* remaining_proc_time():
