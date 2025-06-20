@@ -23,6 +23,7 @@
 #include "proc_threads_helper.h"
 #include "proc_threads_queue.h"
 #include "proc_threads_scheduler.h"
+#include "proc_threads_cancel.h"
 
 /* Delivers a signal to a specific thread, returns 1 if delivered, 0 otherwise */
 static int deliver_signal_to_thread(struct proc *p, struct thread *t, int sig);
@@ -488,69 +489,6 @@ long _cdecl proc_thread_signal_sigmask(ulong mask)
 }
 
 /*
- * Enhanced sigwait with better signal mask management
- * This version temporarily adjusts the thread's signal mask to ensure
- * proper signal delivery during the wait period
- */
-long _cdecl proc_thread_signal_sigwait_enhanced(ulong mask, long timeout)
-{
-    int sig;
-    struct thread *t = CURTHREAD;
-    struct proc *p = curproc;
-    register unsigned short sr;
-    ulong old_mask;
-    
-    if (!t || !p) {
-        TRACE_THREAD("proc_thread_sigwait_enhanced: invalid thread or process");
-        return EINVAL;
-    }
-    
-    if (!p->p_sigacts || !p->p_sigacts->thread_signals) {
-        TRACE_THREAD("proc_thread_sigwait_enhanced: thread signals not enabled");
-        return EINVAL;
-    }
-    
-    TRACE_THREAD("proc_thread_sigwait_enhanced: Thread %d waiting for signals in mask %lx, timeout %ld", 
-                t->tid, mask, timeout);
-    
-    /* Validate mask */
-    if (mask & UNMASKABLE) {
-        TRACE_THREAD("proc_thread_sigwait_enhanced: removing unmaskable signals from wait mask");
-        mask &= ~UNMASKABLE;
-    }
-    
-    /* Save current signal mask and temporarily unblock signals we're waiting for */
-    sr = splhigh();
-    old_mask = THREAD_SIGMASK(t);
-    
-    /* Set mask to block all signals except those we're waiting for */
-    THREAD_SIGMASK_SET(t, old_mask & ~mask);
-    spl(sr);
-    
-    /* Check for already pending signals that match our wait mask */
-    sig = check_thread_signals(t);
-    if (sig && (mask & (1UL << sig))) {
-        /* Found a pending signal we're waiting for */
-        sr = splhigh();
-        THREAD_SIGMASK_SET(t, old_mask);
-        spl(sr);
-        TRACE_THREAD("proc_thread_sigwait_enhanced: returning immediately with pending signal %d", sig);
-        return sig;
-    }
-    
-    /* Call standard sigwait with our adjusted mask */
-    sig = proc_thread_signal_sigwait(mask, timeout);
-    
-    /* Restore original signal mask */
-    sr = splhigh();
-    THREAD_SIGMASK_SET(t, old_mask);
-    spl(sr);
-    
-    TRACE_THREAD("proc_thread_sigwait_enhanced: returning with signal %d", sig);
-    return sig;
-}
-
-/*
  * Send a signal to a specific thread
  */
 long _cdecl proc_thread_signal_kill(struct thread *t, int sig)
@@ -691,6 +629,9 @@ long _cdecl proc_thread_signal_sigwait(ulong mask, long timeout)
 
     TRACE_THREAD("proc_thread_signal_sigwait: PROC ID %d, THREAD ID %d, mask %lx, timeout %ld", 
                  p->pid, t->tid, mask, timeout);
+    
+    // CANCELLATION POINT: Check before waiting
+    pthread_testcancel_internal(t);
 
     /* Check for pending signals first */
     sig = check_thread_signals(t);
@@ -774,6 +715,10 @@ long _cdecl proc_thread_signal_sigwait(ulong mask, long timeout)
 
     TRACE_THREAD("proc_thread_signal_sigwait: Returned from scheduler - PROC ID %d, THREAD ID %d, mask %lx, timeout %ld",
             p->pid, t->tid, mask, timeout);  
+
+    // CANCELLATION POINT: Check after waking up from signal wait
+    pthread_testcancel_internal(t);
+
     /* Cancel timeout if it exists */
     sr = splhigh();
     if (wait_timeout) {
