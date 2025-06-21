@@ -623,7 +623,7 @@ if_ioctl (short cmd, long arg)
             return (ifr->ifru.ifindex > 0) ? 0 : ENODEV;
 		}
 
-		case SIOCGIFNAME_ETH:
+		case SIOCGIFNAME_IFREQ:
 		{
 			char name[IF_NAMSIZ+1];
             /* Validate input pointer */

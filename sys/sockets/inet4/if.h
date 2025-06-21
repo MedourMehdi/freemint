@@ -101,7 +101,6 @@ struct netif
 {
 	char		name[IF_NAMSIZ];/* interface name */
 	short		unit;		/* interface unit */
-	short		index;		/* interface registration order */
 
 	ushort		flags;		/* interface flags */
 	ulong		metric;		/* routing metric */
@@ -152,7 +151,11 @@ struct netif
 					 * depends on the device driver)
 					 */
 	void		(*igmp_mac_filter)(struct netif *, ulong, char action);
+
+	short		index;		/* interface registration order */
+
 	long		reserved[2];
+
 };
 
 /* interface statistics */
@@ -189,11 +192,11 @@ struct ifreq
 		} netmsk;
 		
 		short	flags;			/* if flags, IFF_* */
-		short	ifindex;
 		long	metric;			/* routing metric */
 		long	mtu;			/* max transm. unit */
 		struct	ifstat stats;		/* interface statistics */
 		void	*data;			/* other data */
+		short	ifindex;		/* interface index */
 	} ifru;
 };
 

@@ -1,5 +1,31 @@
 # June 2025
 
+### Added
+- **Socket Infrastructure**
+  - New `sockaddr_storage` structure with CPU-specific alignment (68020+/68000)
+  - `sa_family_t` typedef for socket address families
+  - Multicast address detection macro `IS_MULTICAST()`
+- **Network Interface Indexing**
+  - Added `index` field to `struct netif` tracking registration order
+  - New ioctls: `SIOCGIFINDEX` (get index) and `SIOCGIFNAME_IFREQ` (get name)
+  - Helper functions: `if_name2index()`, `if_index2name()`, `is_valid_ifindex()`
+- **Enhanced Multicast Support**
+  - New socket options: `MCAST_JOIN_GROUP`, `MCAST_LEAVE_GROUP`
+  - Added `struct ip_mreqn` and `struct group_req` for index-based joins
+  - Refactored IGMP join/leave to support interface indices
+
+### Changed
+- **Interface Handling**
+  - Rewrote `if_name2if()` using new `if_sanitizename()` helper
+  - Added index-based lookup to IGMP join/leave operations
+- **Error Handling**
+  - Improved input validation in ioctl handlers
+  - Added error aggregation in multicast operations
+  - Enhanced multicast address validation
+- **Code Structure**
+  - Split IGMP functions into per-interface operations
+  - Standardized struct alignment in `msghdr`
+
 ## Memory and sysconf fixes and improvements
 
 ### Fixed
