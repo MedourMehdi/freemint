@@ -1,5 +1,7 @@
 # June 2025
 
+## Interface Indexing & Multicast Enhancements
+
 ### Added
 - **Socket Infrastructure**
   - New `sockaddr_storage` structure with CPU-specific alignment (68020+/68000)
