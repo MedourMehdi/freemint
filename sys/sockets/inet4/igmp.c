@@ -140,6 +140,16 @@ static ulong allrouters;
                ((ulong)((c) & 0xff) << 8)  | \
                 (ulong)((d) & 0xff)
 
+static long
+aggregate_errors(long current_error, long new_error)
+{
+    /* Priority: EFAULT > EINVAL > ENODEV > other errors > success */
+    if (new_error == 0) return current_error;
+    if (current_error == EFAULT || new_error == EFAULT) return EFAULT;
+    if (current_error == EINVAL || new_error == EINVAL) return EINVAL;
+    if (current_error == ENODEV || new_error == ENODEV) return ENODEV;
+    return new_error; /* Return the most recent non-zero error */
+}
 
 static long
 igmp_input (struct netif *nif, BUF *buf, ulong saddr, ulong daddr)
@@ -563,84 +573,97 @@ igmp_leavegroup_netif(struct netif *nif, ulong groupaddr)
 long
 igmp_joingroup(ulong ifaddr, ulong groupaddr, unsigned short ifindex)
 {
-	struct netif *nif;
+    struct netif *nif;
 
-	if(!ifindex){
-		struct ifaddr *ifa = NULL;
-		long res, last_err = 0;
-		for (nif = allinterfaces; nif; nif = nif->next)
-		{
-			ifa = if_af2ifaddr (nif, AF_INET);
+    /* Validate multicast address first */
+    if (!IS_MULTICAST(groupaddr)) {
+        return EINVAL;
+    }
+    
+    /* Validate interface index */
+    if (!is_valid_ifindex(ifindex)) {
+        return ENODEV;
+    }
+	
+    if (!ifindex) {
+        struct ifaddr *ifa = NULL;
+        long res, last_err = 0;
+        int processed_count = 0;
+        
+        for (nif = allinterfaces; nif; nif = nif->next) {
+            ifa = if_af2ifaddr(nif, AF_INET);
 
-			if ((nif->flags & IFF_IGMP) &&
-				((ifa && ifaddr == ifa->adr.in.sin_addr.s_addr) || (ifaddr == INADDR_ANY))) 
-			{
-				res = igmp_joingroup_netif(nif, groupaddr);
-				if(res){
-					last_err = res;
-				}
-			}
-			return last_err;
-		}
-
-	}
-	else {
-
-		for (nif = allinterfaces; nif; nif = nif->next)
-		{
-			if ((nif->flags & IFF_IGMP) && (nif->index == ifindex)) 
-			{
-				if (!IS_MULTICAST(groupaddr)){
-					return EINVAL;
-				}				
-				return igmp_joingroup_netif(nif, groupaddr);
-			}
-		}
-
-	}
-
-	return EOPNOTSUPP;
+            if ((nif->flags & IFF_IGMP) &&
+                ((ifa && ifaddr == ifa->adr.in.sin_addr.s_addr) || (ifaddr == INADDR_ANY))) {
+                
+                res = igmp_joingroup_netif(nif, groupaddr);
+                processed_count++;
+                
+                if (res) {
+                    last_err = res;
+                    /* Continue trying other interfaces but remember the error */
+                }
+            }
+        }
+        
+        /* Return success if at least one interface succeeded, otherwise last error */
+        return (processed_count > 0 && last_err != 0) ? last_err : 0;
+    }
+    else {
+        /* Interface-specific join */
+        if (!IS_MULTICAST(groupaddr)) {
+            return EINVAL;
+        }
+        
+        for (nif = allinterfaces; nif; nif = nif->next) {
+            if ((nif->flags & IFF_IGMP) && (nif->index == ifindex)) {
+                return igmp_joingroup_netif(nif, groupaddr);
+            }
+        }
+        
+        return ENODEV; /* Interface not found */
+    }
 }
 
 long
 igmp_leavegroup(ulong ifaddr, ulong groupaddr, unsigned short ifindex)
 {
-	struct netif *nif;
+    struct netif *nif;
 
-	if(!ifindex){
+    if (!ifindex) {
         struct ifaddr *ifa = NULL;
-		long res, last_err = 0;
+        long res, aggregated_err = 0;
+        int processed_count = 0;
+        
+        for (nif = allinterfaces; nif; nif = nif->next) {
+            ifa = if_af2ifaddr(nif, AF_INET);
 
-		for (nif = allinterfaces; nif; nif = nif->next)
-		{
-			ifa = if_af2ifaddr (nif, AF_INET);
-
-			if ((nif->flags & IFF_IGMP) &&
-				((ifa && ifaddr == ifa->adr.in.sin_addr.s_addr) || (ifaddr == INADDR_ANY))) 
-			{
-				res = igmp_leavegroup_netif(nif, groupaddr);
-				if(res){
-					last_err = res;
-				}
-			}
-		}
-		return last_err;
-	}
-	else {
-
-		for (nif = allinterfaces; nif; nif = nif->next)
-		{
-			if ((nif->flags & IFF_IGMP) && (nif->index == ifindex)) 
-			{
-				if (!IS_MULTICAST(groupaddr)){
-					return EINVAL;
-				}
-				return igmp_leavegroup_netif(nif, groupaddr);
-			}
-		}
-
-	}
-	return EOPNOTSUPP;
+            if ((nif->flags & IFF_IGMP) &&
+                ((ifa && ifaddr == ifa->adr.in.sin_addr.s_addr) || (ifaddr == INADDR_ANY))) {
+                
+                res = igmp_leavegroup_netif(nif, groupaddr);
+                processed_count++;
+                
+                aggregated_err = aggregate_errors(aggregated_err, res);
+            }
+        }
+        
+        return (processed_count == 0) ? ENODEV : aggregated_err;
+    }
+    else {
+        /* Interface-specific leave */
+        if (!IS_MULTICAST(groupaddr)) {
+            return EINVAL;
+        }
+        
+        for (nif = allinterfaces; nif; nif = nif->next) {
+            if ((nif->flags & IFF_IGMP) && (nif->index == ifindex)) {
+                return igmp_leavegroup_netif(nif, groupaddr);
+            }
+        }
+        
+        return ENODEV; /* Interface not found */
+    }
 }
 
 void

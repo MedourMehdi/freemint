@@ -265,6 +265,7 @@ short		if_getfreeunit	(char *);
 long		if_sanitizename	(char *, char *);
 short		if_name2index	(char *);
 short		if_index2name	(short, char*);
+short		is_valid_ifindex(unsigned short ifindex);
 
 long		if_open		(struct netif *);
 long		if_close	(struct netif *);

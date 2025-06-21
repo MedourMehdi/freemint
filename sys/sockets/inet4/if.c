@@ -615,20 +615,34 @@ if_ioctl (short cmd, long arg)
 	{
 		case SIOCGIFINDEX:
 		{
-			ifr->ifru.ifindex = if_name2index(ifr->ifr_name);
-			if(ifr->ifru.ifindex){
-				return 0;
-			}
+			/* Validate input pointer */
+            if (!ifr || !ifr->ifr_name) {
+                return EFAULT;
+            }
+            ifr->ifru.ifindex = if_name2index(ifr->ifr_name);
+            return (ifr->ifru.ifindex > 0) ? 0 : ENODEV;
 		}
+
 		case SIOCGIFNAME_ETH:
 		{
 			char name[IF_NAMSIZ+1];
+            /* Validate input pointer */
+            if (!ifr) {
+                return EFAULT;
+            }
+            
+            /* Validate interface index range */
+            if (ifr->ifru.ifindex <= 0) {
+                return EINVAL;
+            }			
 			if(ifr->ifr_name && if_index2name(ifr->ifru.ifindex, name)){
 				strncpy (ifr->ifr_name, name, IF_NAMSIZ);
 				return 0;
 			}
+			return ENODEV;
 		}
 	}
+	
 	nif = if_name2if (ifr->ifr_name);
 	if (!nif)
 	{
@@ -1262,4 +1276,23 @@ if_index2name (short ifr_ifindex, char *name)
 		}
 	}
 	return 0;
+}
+
+/* Helper function to validate interface index */
+short
+is_valid_ifindex(unsigned short ifindex)
+{
+    struct netif *nif;
+    
+    if (ifindex == 0) {
+        return 1; /* 0 means "any interface" - always valid */
+    }
+    
+    for (nif = allinterfaces; nif; nif = nif->next) {
+        if (nif->index == ifindex) {
+            return 1; /* Found valid interface */
+        }
+    }
+    
+    return 0; /* Interface index not found */
 }
