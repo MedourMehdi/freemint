@@ -658,7 +658,11 @@ pCB_app_options(char *line)
 			else if (!strnicmp(s, "winframe_size", 13))
 				get_argument(s + 13, &opts->thinframe);
 			else if (!strnicmp(s, "submenu_indicator", 17))
+			{
 				get_argument(s + 17, &opts->submenu_indicator);
+				if (opts->submenu_indicator == 0)
+					opts->submenu_indicator = '\003'; /* right arrow */
+			}
 			else if (!strnicmp(s, "inhibit_hide", 12))
 				get_boolarg(s + 12, &opts->inhibit_hide);
 			else if (!strnicmp(s, "clwtna", 6))
@@ -1007,6 +1011,7 @@ void
 load_config(void *path )
 {
 	char cpath[FILENAME_MAX];
+	long ret;
 
 	struct cnfdata mydata;
 	if( !path || !*(char*)path )
@@ -1019,8 +1024,26 @@ load_config(void *path )
 
 	DIAGS(("Loading config %s", cpath));
 	BLOG((0,"Loading config %s", cpath));
-	parse_cnf(cpath, parser_tab, &mydata, INF_QUIET);
+	ret = parse_cnf(cpath, parser_tab, &mydata, INF_OPTIONAL);
 
+	if (ret != 0)
+	{
+#if GENERATE_DIAGS
+#undef CNF_NAME
+#define CNF_NAME "xaaes.cnf"
+		if( !path || !*(char*)path )
+		{
+			strncpy(cpath, C.Aes->home_path, sizeof(cpath)-sizeof(CNF_NAME)-1);
+			strcat(cpath, CNF_NAME);
+		}
+		else
+			strncpy(cpath, path, sizeof(cpath) );
+
+		DIAGS(("Loading config %s", cpath));
+		BLOG((0,"Loading config %s", cpath));
+		parse_cnf(cpath, parser_tab, &mydata, INF_OPTIONAL);
+#endif
+	}
 
 #if GENERATE_DIAGS
 	{
@@ -1140,7 +1163,7 @@ void write_inf(void)
 	XA_FILE *of;
 	struct helpthread_data *htd;
 
-	sprintf( buf, sizeof(buf), "%s\%s", C.start_path, inf_fname );
+	sprintf( buf, sizeof(buf), "%s%s", C.start_path, inf_fname );
 	of = xa_fopen( buf, O_WRONLY|O_CREAT|O_TRUNC);
 
 	if( !of )
@@ -1221,7 +1244,7 @@ void read_inf(void)
 {
 	struct cnfdata mydata;
 	char buf[256];
-	sprintf( buf, sizeof(buf), "%s\%s", C.start_path, inf_fname );
+	sprintf( buf, sizeof(buf), "%s%s", C.start_path, inf_fname );
 	BLOG((0,"%s:read_inf:%s", get_curproc()->name, buf));
-	parse_cnf(buf, inf_tab, &mydata, INF_QUIET);
+	parse_cnf(buf, inf_tab, &mydata, INF_OPTIONAL);
 }

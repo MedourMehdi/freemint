@@ -1949,7 +1949,7 @@ change_outfile(struct xa_pdlg_info *pdlg, short idx)
 					  file, "Select output file",
 					  handle_fs, cancel_fs, pdlg);
 			pdlg->client->status |= CS_FSEL_INPUT;
-			(*pdlg->client->block)(pdlg->client, 21);
+			(*pdlg->client->block)(pdlg->client);
 			pdlg->client->status &= ~CS_FSEL_INPUT;
 
 			if (pdlg->filesel[0])
@@ -2813,7 +2813,7 @@ XA_pdlg_open(int lock, struct xa_client *client, AESPB *pb)
 			XA_WIND_ATTR tp = wind->active_widgets | MOVER|NAME;
 
 			widg->m.properties |= WIP_NOTEXT;
-			set_toolbar_handlers(&wdlg_th, wind, widg, widg->stuff);
+			set_toolbar_handlers(&wdlg_th, wind, widg, widg->stuff.wt);
 
 			obj_init_focus(wt, OB_IF_RESET);
 
@@ -3108,7 +3108,7 @@ XA_pdlg_evnt(int lock, struct xa_client *client, AESPB *pb)
 		struct wdlg_evnt_parms wep;
 
 		wep.wind	= wind;
-		wep.wt		= get_widget(wind, XAW_TOOLBAR)->stuff;
+		wep.wt		= get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 		wep.ev		= (EVNT *)pb->addrin[2];
 		wep.wdlg	= NULL;
 		wep.callout	= NULL;
@@ -3177,7 +3177,7 @@ Keypress(int lock,
 		struct scroll_info *list;
 		struct xa_pdlg_info *pdlg;
 
-		wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+		wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 		list = object_get_slist(wt->tree + XPDLG_LIST);
 		pdlg = list->data;
 		UNUSED(pdlg);
@@ -3246,7 +3246,7 @@ XA_pdlg_do(int lock, struct xa_client *client, AESPB *pb)
 		change_window_attribs(lock, client, wind, tp, true, true, 2, or, NULL);
 
 		widg->m.properties &= ~WIP_NOTEXT;
-		set_toolbar_handlers(&pdlg_th, wind, widg, widg->stuff);
+		set_toolbar_handlers(&pdlg_th, wind, widg, widg->stuff.wt);
 		wt->flags |= WTF_FBDO_SLIST;
 	/* ............. */
 		pdlg->flags |= 1;
@@ -3258,7 +3258,7 @@ XA_pdlg_do(int lock, struct xa_client *client, AESPB *pb)
 		open_window(lock, wind, wind->rc);
 
 		client->status |= CS_FORM_DO;
-		(*client->block)(client, 0);
+		(*client->block)(client);
 		client->status &= ~CS_FORM_DO;
 
 		pdlg->flags &= ~1;

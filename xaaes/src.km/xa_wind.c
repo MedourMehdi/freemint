@@ -356,11 +356,11 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 		XA_WIDGET *widg;
 
 		widg = get_widget(w, XAW_HSLIDE);
-		if (widg->stuff)
+		if (widg->stuff.sl)
 		{
 			short newpos = bound_sl(pb->intin[2]);
 
-			XA_SLIDER_WIDGET *slw = widg->stuff;
+			XA_SLIDER_WIDGET *slw = widg->stuff.sl;
 			if (client->options.app_opts & XAAO_WF_SLIDE)
 			{
 				short newrpos = bound_sl(pb->intin[3]);
@@ -390,11 +390,11 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 
 		widg = get_widget(w, XAW_VSLIDE);
 
-		if (widg->stuff)
+		if (widg->stuff.sl)
 		{
 			short newpos = bound_sl(pb->intin[2]);
 
-			XA_SLIDER_WIDGET *slw = widg->stuff;
+			XA_SLIDER_WIDGET *slw = widg->stuff.sl;
 			if (client->options.app_opts & XAAO_WF_SLIDE)
 			{
 				short newrpos = bound_sl(pb->intin[3]);
@@ -423,10 +423,10 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 		XA_WIDGET *widg;
 
 		widg = get_widget(w, XAW_HSLIDE);
-		if (widg->stuff)
+		if (widg->stuff.sl)
 		{
 			short newlen;
-			XA_SLIDER_WIDGET *slw = widg->stuff;
+			XA_SLIDER_WIDGET *slw = widg->stuff.sl;
 			newlen = bound_sl(pb->intin[2]);
 			if (slw->length != newlen)
 			{
@@ -443,10 +443,10 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 		XA_WIDGET *widg;
 
 		widg = get_widget(w, XAW_VSLIDE);
-		if (widg->stuff)
+		if (widg->stuff.sl)
 		{
 			short newlen;
-			XA_SLIDER_WIDGET *slw = widg->stuff;
+			XA_SLIDER_WIDGET *slw = widg->stuff.sl;
 			newlen = bound_sl(pb->intin[2]);
 			if (slw->length != newlen)
 			{
@@ -842,7 +842,7 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 		OBJECT *ob = ptr_from_shorts(pb->intin[2], pb->intin[3]);
 		XA_WIDGET *widg = get_widget(w, XAW_TOOLBAR);
 
-		DIAGS(("  wind_set(WF_TOOLBAR): obtree=%lx, current wt=%lx", (unsigned long)ob, (unsigned long)widg->stuff));
+		DIAGS(("  wind_set(WF_TOOLBAR): obtree=%lx, current wt=%lx", (unsigned long)ob, (unsigned long)widg->stuff.wt));
 
 		if (ob)
 		{
@@ -850,10 +850,10 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 			short vslw = 0;
 			long vsl = 0;
 
-			/* if (wt || !widg->stuff)*/	/* new or changed toolbar */
+			/* if (wt || !widg->stuff.wt)*/	/* new or changed toolbar */
 			{
 				GRECT or;
-				int md = widg->stuff ? 1 : 0;
+				int md = widg->stuff.wt ? 1 : 0;
 				short d;
 				struct xa_vdi_settings *v = w->vdi_settings;
 
@@ -861,7 +861,7 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 
 				if( md == 1 /*&& ob != o*/ )	/* changed toolbar */
 				{
-					OBJECT *o = ((XA_TREE*)widg->stuff)->tree;
+					OBJECT *o = widg->stuff.wt->tree;
 					d = o->ob_height - ob->ob_height;
 					remove_widget(lock, w, XAW_TOOLBAR);
 				}
@@ -967,7 +967,7 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 				}
 			}
 		}
-		else if (widg->stuff)	/* remove toolbar */
+		else if (widg->stuff.wt)	/* remove toolbar */
 		{
 			w->min.g_h -= widg->ar.g_h;
 			/*
@@ -1012,7 +1012,7 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 			{
 				XA_TREE *wt = obtree_to_wt(client, ob);
 
-				if (!wt || (wt != widg->stuff))
+				if (!wt || (wt != widg->stuff.wt))
 				{
 
 					DIAGS(("  --- install new menu"));
@@ -1035,7 +1035,7 @@ XA_wind_set(int lock, struct xa_client *client, AESPB *pb)
 					}
 				}
 			}
-			else if (widg->stuff)
+			else if (widg->stuff.wt)
 			{
 				DIAGS(("  --- Remove menu"));
 				remove_widget(lock, w, XAW_MENU);
@@ -1268,27 +1268,49 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 	switch(cmd)
 	{
 	case WF_KIND:		/* new since N.Aes */
-	{
 		o[1] = w->active_widgets;
 		break;
-	}
+
 	case WF_NAME:		/* new since N.Aes */
-	{
 		if (w->active_widgets & NAME)
-			get_window_title(w, (char *)ptr_from_shorts(pb->intin[2], pb->intin[3]));
-		else
+		{
+			/*
+			 * Comments in gemlib say that the window title is copied
+			 * to the address pointed to by intin[2/3].
+			 * However MagiC returns the name in intout[1/2] instead,
+			 * and some other AES libraries (like the one from Pure-C)
+			 * expect it this way
+			 */
+			if (pb->control[1] >= 4)
+			{
+				char *dst = (char *)ptr_from_shorts(pb->intin[2], pb->intin[3]);
+				if (dst)
+					strcpy(dst, w->wname);
+			} else
+			{
+				ptr_to_shorts(w->wname, &o[1]);
+			}
+		} else
 			o[0] = 0;
 
 		break;
-	}
+
 	case WF_INFO:		/* new since N.Aes */
-	{
 		if (w->active_widgets & INFO)
-			get_window_info(w, (char *)ptr_from_shorts(pb->intin[2], pb->intin[3]));
-		else
+		{
+			/* see comments above */
+			if (pb->control[1] >= 4)
+			{
+				char *dst = (char *)ptr_from_shorts(pb->intin[2], pb->intin[3]);
+				if (dst)
+					strcpy(dst, w->winfo);
+			} else
+			{
+				ptr_to_shorts(w->winfo, &o[1]);
+			}
+		} else
 			o[0] = 0;
 		break;
-	}
 	case WF_WHEEL:
 	{
 		long opt = w ? w->opts : client->options.wind_opts;
@@ -1354,10 +1376,9 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			ro->g_w = ro->g_h = 0;
 		}
 		break;
-
 	}
+
 	case WF_FIRSTXYWH:	/* Generate a rectangle list and return the first entry */
-	{
 		w->use_rlc = false;
 		if (is_shaded(w) || !get_rect(&w->rect_list, &w->rwa, true, ro))
 		{
@@ -1371,9 +1392,8 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			C.rect_lock++;
 		}
 		break;
-	}
+
 	case WF_NEXTXYWH:		/* Get next entry from a rectangle list */
-	{
 		if (is_shaded(w) || !w->rect_lock)
 			ro->g_x = ro->g_y = ro->g_w = ro->g_h = 0;
 		else
@@ -1402,10 +1422,10 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			}
 		}
 		break;
-	}
+
 	case WF_TOOLBAR:
 	{
-		XA_TREE *wt = get_widget(w, XAW_TOOLBAR)->stuff;
+		XA_TREE *wt = get_widget(w, XAW_TOOLBAR)->stuff.wt;
 
 		if (wt)
 			ptr_to_shorts(wt->tree, pb->intout + 1);
@@ -1414,9 +1434,10 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 
 		break;
 	}
+
 	case WF_MENU:
 	{
-		XA_TREE *wt = get_widget(w, XAW_MENU)->stuff;
+		XA_TREE *wt = get_widget(w, XAW_MENU)->stuff.wt;
 
 		if (wt)
 			ptr_to_shorts(wt->tree, pb->intout + 1);
@@ -1424,6 +1445,7 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			ptr_to_shorts(NULL, pb->intout + 1);
 		break;
 	}
+
 	/*
 	 * The info given by these function is very important to app's
          * hence the DIAG's
@@ -1433,7 +1455,6 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 	 * Get the current coords of the window
 	 */
 	case WF_CURRXYWH:
-	{
 		if (w->opts & XAWO_WCOWORK)
 			*ro = w->rwa;
 		else
@@ -1441,22 +1462,20 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 		DIAG((D_w, w->owner, "get curr for %d: %d/%d,%d/%d",
 			wind ,ro->g_x,ro->g_y,ro->g_w,ro->g_h));
 		break;
-	}
+
 	/*
 	 * Get the current coords of the window's user work area
 	 */
 	case WF_WORKXYWH:
-	{
 		*ro = w->rwa;
 		DIAG((D_w, w->owner, "get work for %d: %d/%d,%d/%d",
 			wind ,ro->g_x,ro->g_y,ro->g_w,ro->g_h));
 		break;
-	}
+
 	/*
 	 * Get previous window position
 	 */
 	case WF_PREVXYWH:
-	{
 		if (w->opts  & XAWO_WCOWORK)
 			*ro = f2w(&w->delta, &w->pr, true);
 		else
@@ -1464,12 +1483,11 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 		DIAG((D_w, w->owner, "get prev for %d: %d/%d,%d/%d",
 			wind ,ro->g_x,ro->g_y,ro->g_w,ro->g_h));
 		break;
-	}
+
 	/*
 	 * Get maximum window dimensions specified in wind_create() call
 	 */
 	case WF_FULLXYWH:
-	{
 		/* This is the way TosWin2 uses the feature.
 		 * Get the info and behave accordingly.
 		 * Not directly under AES control.
@@ -1494,19 +1512,17 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 				wind ,ro->g_x,ro->g_y,ro->g_w,ro->g_h));
 		}
 		break;
-	}
+
 	/*
 	 * Return supported window features.
 	 */
 	case WF_BEVENT:
-	{
 		o[1] = (w->active_widgets & NO_TOPPED) ? BEVENT_WORK : 0;
 		o[2] = o[3] = o[4] = 0;
 		break;
-	}
+
 	/* Extension, gets the bottom window */
 	case WF_BOTTOM:
-	{
 		if ((w = root_window->prev))
 		{
 			o[1] = w->handle;
@@ -1518,9 +1534,8 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			o[2] = 0;
 		}
 		break;
-	}
+
 	case WF_TOP:
-	{
 		w = S.focus;
 		if (!w)
 			w = TOP_WINDOW;
@@ -1557,11 +1572,10 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 			o[0] = 0;
 		}
 		break;
-	}
+
 	/* AES4 compatible stuff */
 	case WF_OWNER:
 	case WF_M_OWNER:
-	{
 		if (w == root_window)
 			/* If it is the root window, things arent that easy. */
 			o[1] = get_desktop()->owner->p->pid;
@@ -1584,12 +1598,11 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 
 		DIAG((D_wind, client, "  --  owner: %d(%d), above: %d, below: %d", o[1], o[2], o[3], o[4]));
 		break;
-	}
+
 	case WF_VSLIDE:
-	{
 		if (w->active_widgets & VSLIDE)
 		{
-			slw = get_widget(w, XAW_VSLIDE)->stuff;
+			slw = get_widget(w, XAW_VSLIDE)->stuff.sl;
 			o[1] = slw->position;
 			if (client->options.app_opts & XAAO_WF_SLIDE)
 				o[2] = slw->rpos;
@@ -1597,12 +1610,11 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 		else
 			o[0] = o[1] = 0;
 		break;
-	}
+
 	case WF_HSLIDE:
-	{
 		if (w->active_widgets & HSLIDE)
 		{
-			slw = get_widget(w, XAW_HSLIDE)->stuff;
+			slw = get_widget(w, XAW_HSLIDE)->stuff.sl;
 			o[1] = slw->position;
 			if (client->options.app_opts & XAAO_WF_SLIDE)
 				o[2] = slw->rpos;
@@ -1610,29 +1622,27 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 		else
 			o[0] = o[1] = 0;
 		break;
-	}
+
 	case WF_HSLSIZE:
-	{
 		if (w->active_widgets & HSLIDE)
 		{
-			slw = get_widget(w, XAW_HSLIDE)->stuff;
+			slw = get_widget(w, XAW_HSLIDE)->stuff.sl;
 			o[1] = slw->length;
 		}
 		else
 			o[0] = o[1] = 0;
 		break;
-	}
+
 	case WF_VSLSIZE:
-	{
 		if (w->active_widgets & VSLIDE)
 		{
-			slw = get_widget(w, XAW_VSLIDE)->stuff;
+			slw = get_widget(w, XAW_VSLIDE)->stuff.sl;
 			o[1] = slw->length;
 		}
 		else
 			o[0] = o[1] = 0;
 		break;
-	}
+
 	case WF_SCREEN:
 	{
 		union { long *lp; short *sp;} ptrs;
@@ -1671,27 +1681,28 @@ XA_wind_get(int lock, struct xa_client *client, AESPB *pb)
 		*ptrs.lp   = (long)client->half_screen_size;
 		break;
 	}
+
 	case WF_DCOLOR:
-	{
-		DIAGS(("WF_DCOLOR %d for %s, %d,%d", o[1], c_owner(client),o[2],o[3]));
-		goto oeps;
-	}
 	case WF_COLOR:
-	{
-		DIAGS(("WF_COLOR %d for %s", o[1], c_owner(client)));
-oeps:
+		DIAGS(("%s %d for %s", setget(cmd), pb->intin[2], c_owner(client)));
+		/*
+		 * FIXME: WF_DCOLOR should only be valid for window handle 0
+		 *        WF_COLOR should only be valid for window handle != 0
+		 */
 		if (w->active_theme->get_widgcolor)
 		{
-			if (o[1] <= W_BOTTOMER)
-			{
-				union { short c[8]; BFOBSPEC cw[4]; } col;
+			short elem = pb->intin[2];
 
-				(*w->active_theme->get_widgcolor)(w, o[1], col.cw);
+			if (elem >= 0 && elem <= W_BOTTOMER)
+			{
+				union { long l[4]; BFOBSPEC cw[4]; } col;
+
+				(*w->active_theme->get_widgcolor)(w, elem, col.cw);
 				/*
 				 * Colorword is the last 16 bits of BFOBSPEC (low word)
 				 */
-				o[2] = col.c[1];
-				o[3] = col.c[3];
+				o[2] = col.l[0];
+				o[3] = col.l[2];
 			}
 			else
 			{
@@ -1701,26 +1712,23 @@ oeps:
 		}
 		else
 			o[0] = 0;
-
-		DIAGS(("   --   %04x", o[2]));
+		DIAGS(("   --   %04x %04x", o[2], o[3]));
 		break;
-	}
+
 	case WF_NEWDESK:
-	{
 		Sema_Up(LOCK_DESK);
 
 		ptr_to_shorts(get_desktop()->tree, o + 1);
 
 		Sema_Dn(LOCK_DESK);
 		break;
-	}
+
 	case WF_ICONIFY:
-	{
 		o[1] = (is_iconified(w)) ? 1 : 0;
 		o[2] = C.iconify.g_w;
 		o[3] = C.iconify.g_h;
 		break;
-	}
+
 	case WF_UNICONIFY:
 	{
 		GRECT *sr = (is_iconified(w)) ? &w->ro : &w->r;
@@ -1730,22 +1738,22 @@ oeps:
 			*ro = *sr;
 		break;
 	}
+
 	case WF_MINXYWH:
 		*ro = w->min;
 		break;
+
 	case WF_SHADE:
-	{
 		*o = (w->window_status & XAWS_SHADED) ? 1 : 0;
 		o[1] = *o;
 		break;
-	}
+
 	case WF_XAAES: /* 'XA' */
-	{
 		o[0] = WF_XAAES;
 		o[1] = HEX_VERSION;
 		DIAGS(("hex_version = v%04x",o[1]));
 		break;
-	}
+
 	case WF_OPTS:
 	{
 		unsigned long *optr = (w ? &w->opts : &client->options.wind_opts);
@@ -1756,35 +1764,29 @@ oeps:
 	}
 
 	case WF_CALCF2W:
-	{
 		*ro = f2w(&w->delta, (const GRECT *)&pb->intin[2], true);
 		break;
-	}
+
 	case WF_CALCW2F:
-	{
 		*ro = w2f(&w->delta, (const GRECT *)&pb->intin[2], true);
 		break;
-	}
+
 	case WF_CALCF2U:
-	{
 		*ro = f2w(&w->wadelta, (const GRECT *)&pb->intin[2], true);
 		break;
-	}
+
 	case WF_CALCU2F:
-	{
 		*ro = w2f(&w->wadelta, (const GRECT *)&pb->intin[2], true);
 		break;
-	}
+
 	case WF_MAXWORKXYWH:
-	{
 		*ro = f2w(&w->delta, (const GRECT *)&root_window->wa, true);
 		break;
-	}
+
 	default:
-	{
 		DIAG((D_wind,client,"wind_get: %d",cmd));
 		o[0] = 0;
-	}
+		break;
 	}
 
 	return XAC_DONE;

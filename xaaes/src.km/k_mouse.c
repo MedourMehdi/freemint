@@ -519,7 +519,7 @@ XA_button_event(int lock, const struct moose_data *md, bool widgets)
 
 			if( !widg )
 				widg = get_menu_widg();
-			menu = (XA_TREE *)widg->stuff;
+			menu = widg->stuff.wt;
 			client = menu->owner;
 			if (!(client->status & CS_EXITING))
 			{
@@ -574,7 +574,7 @@ XA_button_event(int lock, const struct moose_data *md, bool widgets)
 		else
 		{
 			button_event(lock, locker, md);
-			Unblock(locker, 1, 15);
+			Unblock(locker, 1);
 		}
 	}
 }
@@ -664,7 +664,7 @@ XA_move_event(int lock, const struct moose_data *md)
 					if (C.aesmouse != -1)
 						xa_graf_mouse(-1, NULL, NULL, true);
 
-					menu = (XA_TREE *)widg->stuff;
+					menu = widg->stuff.wt;
 					client = menu->owner;
 					if (!(client->status & CS_EXITING))
 					{
@@ -793,7 +793,7 @@ chk_button_waiter(struct moose_data *md)
 		{
 			DIAGA(("chk_button_waiter: Got button_waiter %s", C.button_waiter->name));
 			add_client_md(C.button_waiter, md);
-			Unblock(C.button_waiter, 1, 16);
+			Unblock(C.button_waiter, 1);
 			if (!(md->state && md->cstate))
 				C.button_waiter = NULL;
 			return true;

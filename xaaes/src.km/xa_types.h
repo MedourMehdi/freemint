@@ -345,19 +345,6 @@ struct xa_wtexture
 	XAMFDB	*body;
 };
 
-#if WITH_GRADIENTS
-struct xa_gradient
-{
-	struct xa_data_hdr *allocs;
-	short wmask, hmask;
-	short w, h;
-	short method;
-	short n_steps;
-	short steps[8];
-	struct rgb_1000 c[16];
-};
-#endif
-
 struct xa_wcol
 {
 	short	c;	/* color */
@@ -396,8 +383,6 @@ struct xa_wcol_inf
 /*-----------------------------------------------------------------
  * Configuration and options structures
  *-----------------------------------------------------------------*/
-struct widget_theme;
-
 #define ALTSC_ALERT	1
 #define ALTSC_DIALOG	2
 #define ALTSC_ONLY_PREDEF	4
@@ -506,7 +491,8 @@ struct mbs
 #define XAWAIT_MENU		0x00040000UL	/* XaAES private; menu rectangle event */
 #define XAWAIT_NTO		0x00080000UL	/* XaAES private; timeout value NULL */
 
-typedef struct task_administration_block * TASK(struct task_administration_block *tab, short item);
+typedef struct task_administration_block Tab;
+typedef Tab *TASK(Tab *tab, short item);
 
 struct xa_mouse_rect
 {
@@ -938,7 +924,6 @@ struct widget_tree
 	short pdx, pdy;
 	short pop;
 	bool is_menu;			/* true when the tree is a menu or part of it. */
-	bool menu_line;			/* draw a menu line. */
 	bool zen;			/* true when the tree is embedded in a window.
 	                                 * Do not shadow and border. */
 	short dx, dy;			/* displacement of root from upper left corner of window
@@ -1235,9 +1220,6 @@ struct widget_theme
 
 struct xa_widget_theme
 {
-#if 0
-	struct widget_theme *active;
-#endif
 	struct widget_theme *client;
 	struct widget_theme *popup;
 	struct widget_theme *alert;
@@ -1352,6 +1334,8 @@ struct toolbar_handlers
 	void (*destruct)(struct xa_widget *w);
 };
 
+typedef struct xa_slider_widget XA_SLIDER_WIDGET;
+
 /* Window Widget */
 struct xa_widget
 {
@@ -1380,9 +1364,13 @@ struct xa_widget
 	short slider_type;		/* which slider should move for scroll widget */
 
 #define STUFF_IS_WT 1
-
 	short stufftype;		/* type of widget dependant pointer */
-	void *stuff;			/* Pointer to widget dependant context data, if any */
+	union {
+		XA_TREE *wt;
+		XA_SLIDER_WIDGET *sl;
+		/* const */ char *name;
+		void *ptr;
+	} stuff;
 
 	short  start;			/* If stuff is a OBJECT tree, we want start drawing here */
 };
@@ -1413,7 +1401,6 @@ struct xa_slider_widget
 	short rpos;
 	GRECT r;				/* physical */
 };
-typedef struct xa_slider_widget XA_SLIDER_WIDGET;
 
 #define ZT_A	1
 #define ZT_B	2
@@ -2104,7 +2091,6 @@ struct task_administration_block
 	int dbg3;
 #endif
 };
-typedef struct task_administration_block Tab;
 
 
 /*
@@ -2160,7 +2146,7 @@ struct xa_client
 	struct xa_aesmsg_list *crit_msg;	/* Critical AES messages - these are prioritized */
 	struct xa_aesmsg_list *irdrw_msg;	/* Internal redraw messages */
 
-	void	(*block)(struct xa_client *client, int which);
+	void	(*block)(struct xa_client *client);
 
 #define CS_LAGGING		0x00000001
 #define CS_CE_REDRAW_SENT 	0x00000002

@@ -423,7 +423,7 @@ void add_window_to_tasklist(struct xa_window *wi, const char *title)
 
 		if (wind && wind != wi)
 		{
-			struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+			struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 			OBJECT *obtree = wt->tree;
 			SCROLL_INFO *list = object_get_slist(obtree + TM_LIST);
 			struct sesetget_params p = { 0 };
@@ -547,7 +547,7 @@ add_to_tasklist(struct xa_client *client)
 
 	if (wind)
 	{
-		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 		OBJECT *obtree = wt->tree;
 		SCROLL_INFO *list = object_get_slist(obtree + TM_LIST);
 		OBJECT *icon;
@@ -646,7 +646,7 @@ remove_from_tasklist(struct xa_client *client)
 
 	if (wind)
 	{
-		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 		OBJECT *obtree = wt->tree;
 		SCROLL_INFO *list = object_get_slist(obtree + TM_LIST);
 		struct sesetget_params p = { 0 };
@@ -698,7 +698,7 @@ update_tasklist_entry( int md, void *app, struct helpthread_data *htd, long pid,
 
 	if (wind)
 	{
-		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+		struct widget_tree *wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 		OBJECT *obtree = wt->tree;
 		SCROLL_INFO *list = object_get_slist(obtree + TM_LIST);
 		struct sesetget_params p = { 0 };
@@ -1073,7 +1073,7 @@ screen_dump(int lock, struct xa_client *client, short open)
 			C.updatelock_count++;
 
 			do_form_alert(lock, client, 4, xa_strings(SDALERT), XAAESNAME);
-			Block(client, 0);
+			Block(client);
 #if WITH_BBL_HELP
 			xa_bubble( 0, bbl_tmp_inact, 0, 0 );
 #endif
@@ -1089,6 +1089,29 @@ screen_dump(int lock, struct xa_client *client, short open)
 				r.g_w = 0;
 				r.g_h = 0;
 				rubber_box(client, SE, r, &d, 0,0, root_window->r.g_h, root_window->r.g_w, &r);
+				/*
+				 * do not send negative coordinates, from selecting bottom to top
+				 */
+				if (r.g_w < 0)
+				{
+					r.g_x += r.g_w;
+					r.g_w = -r.g_w;
+				}
+				if (r.g_x < 0)
+				{
+					r.g_w += r.g_x;
+					r.g_x = 0;
+				}
+				if (r.g_h < 0)
+				{
+					r.g_y += r.g_h;
+					r.g_h = -r.g_h;
+				}
+				if (r.g_y < 0)
+				{
+					r.g_h += r.g_y;
+					r.g_y = 0;
+				}
 			}
 			else if (a->intout[0] == 2)	/* full */
 				r = root_window->r;
@@ -1191,6 +1214,7 @@ screen_dump(int lock, struct xa_client *client, short open)
 				}
 				else
 				{
+					/* should not get here */
 					char s[128];
 					sprintf( s, sizeof(s)-1, "[1][could not snap area:w=%d,h=%d][OK]", r.g_w, r.g_h);
 					do_form_alert(lock, client, 1, s, XAAESNAME );
@@ -2033,7 +2057,7 @@ open_taskmanager(int lock, struct xa_client *client, short open)
 			struct proc *rootproc = pid2proc(0);
 			static int first = 1;	/* do full-redraw for correct slider-size */
 
-			wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+			wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 			list = object_get_slist(wt->tree + TM_LIST);
 
 			if( first == 0 )

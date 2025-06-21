@@ -975,7 +975,7 @@ If set, XaAES creates or uses a trans!-la!-tion file (.rsl) for
 If true difference between resource-filesize and size given in rsc-header
    is no error.
  
-item [SUBMENU_INDICATOR = <value> (default: 0)] (!nl)
+item [SUBMENU_INDICATOR = <value> (default: 1)] (!nl)
 Controls how the attachment of a submenu is indicated.
 !begin_itemize !compressed
 !item  0: Use "right arrow" (0x03). Same as AES4.1/N.AES, but might not be available in all fonts.

@@ -119,7 +119,6 @@ XA_menu_bar(int lock, struct xa_client *client, AESPB *pb)
 				}
 				/* HR: std_menu is now a complete widget_tree :-) */
 				mwt->is_menu = true;
-				mwt->menu_line = true;
 
 				if (swap)
 				{
@@ -645,7 +644,7 @@ menu_popup(int lock, struct xa_client *client, XAMENU *mn, XAMENU_RESULT *result
 				 py - y);
 
 			client->status |= CS_BLOCK_MENU_NAV;
-			(*client->block)(client, 1);
+			(*client->block)(client);
 			client->status &= ~CS_BLOCK_MENU_NAV;
 
 			ob->ob_x = old_x;
@@ -766,7 +765,7 @@ XA_form_popup(int lock, struct xa_client *client, AESPB *pb)
 				 y);
 
 			client->status |= CS_BLOCK_MENU_NAV;
-			(*client->block)(client, 1);
+			(*client->block)(client);
 			client->status &= ~CS_BLOCK_MENU_NAV;
 
 			ob->ob_x = old_x;
@@ -816,9 +815,9 @@ XA_menu_attach(int lock, struct xa_client *client, AESPB *pb)
 
 	DIAG((D_menu, client, "menu_attach %d", pb->intin[0]));
 
-	pb->intout[0] = 1;
+	pb->intout[0] = 1;	/* non-error return code by default */
 
-	if( pb->addrin[1] == 0 )
+	if( pb->addrin[1] == 0 )	/* mdata NULL? */
 	{
 		if( md != ME_INQUIRE )
 			md = ME_REMOVE;

@@ -110,7 +110,7 @@ static long	ppp_output	(struct netif *, BUF *, const char *, short, short);
 static long	ppp_ioctl	(struct netif *, short, long);
 static short	ppp_send	(struct slbuf *);
 static short	ppp_recv	(struct slbuf *);
-static ushort	ppp_fcs		(char *, long);
+static ushort	ppp_fcs		(const char *, long);
 static void	ppp_recv_frame	(struct ppp *, BUF *);
 static void	ppp_recv_usr	(struct ppp *, BUF *);
 static long	ppp_send_frame	(struct ppp *, BUF *, short);
@@ -766,6 +766,15 @@ ppp_recv_usr (struct ppp *ppp, BUF *buf)
 		ikill (ppp->pgrp, SIGIO);
 }
 
+/*
+ * the memcpy() below is overlapping, but we know that it will work.
+ * Just silence the warning.
+ */
+#pragma GCC diagnostic push
+#if __GNUC_PREREQ(8,0)
+#pragma GCC diagnostic ignored "-Wrestrict"
+#endif
+
 static void
 ppp_recv_frame (struct ppp *ppp, BUF *b)
 {
@@ -909,6 +918,7 @@ ppp_recv_frame (struct ppp *ppp, BUF *b)
 		ppp_recv_usr (ppp, b);
 	}
 }
+#pragma GCC diagnostic pop
 
 /*
  * /dev/ppp? device driver.

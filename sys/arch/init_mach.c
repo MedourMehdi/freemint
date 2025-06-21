@@ -57,7 +57,8 @@ enum special_hw
 	none = 0,
 	hades,
 	ct2,
-	ct60
+	ct60,
+	raven
 # ifdef WITH_NATIVE_FEATURES
 	,
 	emulator
@@ -171,6 +172,11 @@ _getmch (void)
 					break;
 				}
 
+				case COOKIE_RAVN:
+				{
+					add_info = raven;
+				} break;
+
 #ifdef __mcoldfire__
 				case COOKIE__CPU:
 				{
@@ -208,10 +214,14 @@ _getmch (void)
 	fputype = detect_fpu();
 #ifndef WITH_68080
 	/* own SFP-004 test */
-	sfptype = detect_sfp();
+	/* ignore on machines which cannot have an sfp and also cannot bus error on the tested address */
+	if (add_info != raven)
+	{
+		sfptype = detect_sfp();
 	
-	if ((sfptype >> 16) > 1)
-	    fputype |= 0x00010000;	// update _FPU cookie with the SFP-004 bit
+		if ((sfptype >> 16) > 1)
+		    fputype |= 0x00010000;	// update _FPU cookie with the SFP-004 bit
+	}
 #endif
 
 	if ((fputype >> 16) > 1)	// coprocessor mode only
@@ -265,7 +275,7 @@ _getmch (void)
 	 *	Turns out that my CT63 Falcon also needs to have this protected
 	 *	by the pmmu, so we _always_ do it.
 	 */
-	if (protect_page0 == 0 && (mch == MILAN_C || add_info == hades))
+	if (protect_page0 == 0 && (mch == MILAN_C || add_info == hades || add_info == raven))
 	{
 		boot_print("Hardware needs SUPER on first descriptor!\r\n");
 		protect_page0 = 1;
@@ -365,6 +375,9 @@ identify (long mch, enum special_hw info)
 		case ct60:
 			machine = machine_ct60;
 			break;
+		case raven:
+			machine = machine_raven;
+			break;
 # ifdef WITH_NATIVE_FEATURES
 		case emulator:
 			machine = machine_emulator;
@@ -384,7 +397,7 @@ identify (long mch, enum special_hw info)
 #endif
 	if (fpu)
 	{
-		switch (fputype >> 16)
+		switch ((fputype >> 16) & ~1)
 		{
 			case 0x04:
 				fpu_type = !sfp ? "68881" : (sfp == 0x04 ?  "68881 & 68881 (SFP-004)" : "68881 & 68882 (SFP-004)");

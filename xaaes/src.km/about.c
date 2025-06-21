@@ -557,7 +557,7 @@ open_about(int lock, struct xa_client *client, bool open, char *fn)
 
 			(obtree + ABOUT_OK)->ob_y += h * 2;//3 - 2;
 			(obtree + ABOUT_OK)->ob_height -= h;
-			for( i = ABOUT_VERSION - 1; i <= RSC_VERSION; i++ )
+			for( i = ABOUT_VERSION - 1; i <= ABOUT_TARGET; i++ )
 			{
 				if( i != ABOUT_OK )
 					(obtree + i)->ob_flags |= OF_HIDETREE;
@@ -655,7 +655,7 @@ open_about(int lock, struct xa_client *client, bool open, char *fn)
 	else{
 		if( !view_file )
 			wind = htd->w_about;
-		wt = get_widget(wind, XAW_TOOLBAR)->stuff;
+		wt = get_widget(wind, XAW_TOOLBAR)->stuff.wt;
 	}
 
 	list = object_get_slist(wt->tree + ABOUT_LIST);
