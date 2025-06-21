@@ -527,29 +527,36 @@ igmp_joingroup_netif(struct netif *nif, ulong groupaddr){
 }
 
 static long 
-igmp_leavegroup_netif(struct netif *nif, ulong groupaddr){
-	struct igmp_group *group;
-	group = igmp_lookfor_group(nif, groupaddr);
-
-	if (group)
-	{
-		if (group->use <= 1)
-		{
-			igmp_send(group, IGMP_LEAVE_GROUP);
-		}
-
-		if (nif->igmp_mac_filter)
-		{
-			nif->igmp_mac_filter(nif, groupaddr, IGMP_DEL_MAC_FILTER);
-		}
-
-		return igmp_remove_group(group);
-	}
-	else
-	{
-		group->use--;
-		return 0;
-	}
+igmp_leavegroup_netif(struct netif *nif, ulong groupaddr)
+{
+    struct igmp_group *group;
+    
+    group = igmp_lookfor_group(nif, groupaddr);
+    if (!group) {
+        return ENOENT;  /* Group not found */
+    }
+    
+    /* Decrement use count first - handle underflow protection */
+    if (group->use > 0) {
+        group->use--;
+    }
+    
+    /* Only perform cleanup operations if this was the last reference */
+    if (group->use == 0) {
+        /* Send leave message to notify other systems */
+        igmp_send(group, IGMP_LEAVE_GROUP);
+        
+        /* Remove MAC filter if supported by interface */
+        if (nif->igmp_mac_filter) {
+            nif->igmp_mac_filter(nif, groupaddr, IGMP_DEL_MAC_FILTER);
+        }
+        
+        /* Remove the group from the list */
+        return igmp_remove_group(group);
+    }
+    
+    /* Group still has active references */
+    return 0;
 }
 
 
