@@ -1,5 +1,21 @@
 # June 2025
 
+## Memory and sysconf fixes and improvements
+
+### Fixed
+- **sysconf Implementation**  
+  - Corrected `_SC_PHYS_PAGES` to report **total physical memory** instead of free memory (`dos.c`)
+  - Added missing `_SC_AVPHYS_PAGES` support to report **available physical memory** (`dos.c`)
+
+### Changed
+- **Code Readability**  
+  - Replaced magic numbers in `sys_s_ysconf()` with named constants for sysconf parameters (`dos.c`)
+  - Added sync comment referencing `mintlib/include/bits/confname.h` (`dos.c`)
+
+### Added
+- **Memory API**  
+  - New `totalphysmem()` function to calculate total physical RAM (`memory.c`, `memory.h`)
+
 ## Context Switch optimizations
 
 Below is a summary of the cycle count differences between the original and optimized context.S assembly files for 68K routines, broken down by function and platform (M68000, M68020+, ColdFire). The savings are measured in CPU cycles and focus on key optimizations:
