@@ -32,6 +32,48 @@ struct netif *allinterfaces, *if_lo;
  */
 static char stack[8192];
 
+/* Global index counter - should be persistent across interface operations */
+static unsigned short next_if_index = 1;
+
+/* 
+ * Find the next available interface index
+ * This ensures unique indices even with interface removal
+ */
+static unsigned short
+if_get_next_index(void)
+{
+    struct netif *nif;
+    unsigned short candidate = next_if_index;
+    int found;
+    
+    /* Find first unused index starting from next_if_index */
+    do {
+        found = 0;
+        for (nif = allinterfaces; nif; nif = nif->next) {
+            if (nif->index == candidate) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            next_if_index = candidate + 1;
+            return candidate;
+        }
+        candidate++;
+        
+        /* Wrap around if we hit max value (avoid 0) */
+        if (candidate == 0) {
+            candidate = 1;
+        }
+        
+        /* Safety check to prevent infinite loop */
+        if (candidate == next_if_index) {
+            /* All indices exhausted - very unlikely */
+            return 0;
+        }
+    } while (1);
+}
+
 INLINE void *
 setstack (register void *sp)
 {
@@ -308,6 +350,10 @@ if_deregister (struct netif *nif)
 			} else {
 				ifpb->next = ifp->next;
 			}
+
+            DEBUG(("if_deregister: removed interface index %d", nif->index));
+            /* Note: We don't reset next_if_index to allow index reuse detection */
+
 			return 1; /* indicating removed */
 		}
 		ifpb = ifp;
@@ -345,11 +391,13 @@ if_register (struct netif *nif)
 	nif->out_packets = 0;
 	nif->out_errors = 0;
 	nif->collisions = 0;
-	if(allinterfaces){
-		nif->index = allinterfaces->index + 1;
-	}else{
-		nif->index = 1;
-	}
+
+    nif->index = if_get_next_index();
+    if (nif->index == 0) {
+        DEBUG(("if_register: failed to allocate interface index"));
+        return ENOSPC;
+    }
+
 	nif->next = allinterfaces;
 	allinterfaces = nif;
 	if (nif->timeout && !have_timeout)
@@ -613,34 +661,54 @@ if_ioctl (short cmd, long arg)
 	ifr = (struct ifreq *) arg;
 	switch (cmd)
 	{
-		case SIOCGIFINDEX:
-		{
-			/* Validate input pointer */
+        case SIOCGIFINDEX:
+        {
+            unsigned short index;
+            
+            /* Validate input pointer */
             if (!ifr || !ifr->ifr_name) {
                 return EFAULT;
             }
-            ifr->ifru.ifindex = if_name2index(ifr->ifr_name);
-            return (ifr->ifru.ifindex > 0) ? 0 : ENODEV;
-		}
+            
+            /* Validate interface name length */
+            ifr->ifr_name[IF_NAMSIZ-1] = '\0'; /* Ensure null termination */
+            
+            index = if_name2index(ifr->ifr_name);
+            if (index == 0) {
+                return ENODEV;
+            }
+            
+            ifr->ifru.ifindex = index;
+            return 0;
+        }
 
-		case SIOCGIFNAME_IFREQ:
-		{
-			char name[IF_NAMSIZ+1];
+        case SIOCGIFNAME_IFREQ:
+        {
+            char name[IF_NAMSIZ+1];
+            
             /* Validate input pointer */
             if (!ifr) {
                 return EFAULT;
             }
             
             /* Validate interface index range */
-            if (ifr->ifru.ifindex <= 0) {
+            if (ifr->ifru.ifindex == 0) {
                 return EINVAL;
-            }			
-			if(ifr->ifr_name && if_index2name(ifr->ifru.ifindex, name)){
-				strncpy (ifr->ifr_name, name, IF_NAMSIZ);
-				return 0;
-			}
-			return ENODEV;
-		}
+            }
+            
+            /* Validate interface exists */
+            if (!is_valid_ifindex(ifr->ifru.ifindex)) {
+                return ENODEV;
+            }
+            
+            if (if_index2name(ifr->ifru.ifindex, name)) {
+                strncpy(ifr->ifr_name, name, IF_NAMSIZ);
+                ifr->ifr_name[IF_NAMSIZ-1] = '\0'; /* Ensure null termination */
+                return 0;
+            }
+            
+            return ENODEV;
+        }
 	}
 	
 	nif = if_name2if (ifr->ifr_name);
@@ -1284,8 +1352,9 @@ is_valid_ifindex(unsigned short ifindex)
 {
     struct netif *nif;
     
+    /* 0 is special case - means "any interface" in some contexts */
     if (ifindex == 0) {
-        return 1; /* 0 means "any interface" - always valid */
+        return 1; 
     }
     
     for (nif = allinterfaces; nif; nif = nif->next) {
