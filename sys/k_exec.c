@@ -280,9 +280,9 @@ sys_pexec(short mode, const void *p1, const void *p2, const void *p3)
 				/* p1 = function pointer, p2 = argument, p3 = stack (can be NULL) */
 				void *(*func)(void*) = (void *(*)(void*)) (unsigned long) p1;
 				void *arg = (void*) (unsigned long) p2;
-				void *stack = (void*) (unsigned long) p3;
+				void *attr = (void*) (unsigned long) p3;
 				
-				return proc_thread_create(func, arg, stack);
+				return proc_thread_create(func, arg, attr);
 			}
 		default:
 		{

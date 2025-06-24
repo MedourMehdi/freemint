@@ -27,7 +27,16 @@
 #include "proc_threads_tsd.h"
 #include "proc_threads_cleanup.h"
 
-/* Threads stuff */
+#define PTHREAD_CREATE_DETACHED  1
+
+/* Thread attribute type */
+typedef struct {
+    int detachstate;
+    size_t stacksize;
+    int policy;
+    int priority;
+} pthread_attr_t;
+
 
 static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void *stack_ptr);
 static void proc_thread_start(void);
@@ -37,15 +46,40 @@ static struct thread* create_idle_thread(struct proc *p);
 static void *idle_thread_func(void *arg);
 
 // Thread creation syscall
-long _cdecl proc_thread_create(void *(*func)(void*), void *arg, void *stack) {    
-    TRACE_THREAD("CREATETHREAD: func=%p arg=%p stack=%p", func, arg, stack);
+long _cdecl proc_thread_create(void *(*func)(void*), void *arg, void *attr) {    
+    TRACE_THREAD("CREATETHREAD: func=%p arg=%p attr=%p", func, arg, attr);
 
     init_main_thread_context(curproc);
-    return create_thread(curproc, func, arg, stack);
+    return create_thread(curproc, func, arg, attr);
 }
 
-static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void* stack_ptr) {
+static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void* attr_ptr) {
     register unsigned short sr;
+    size_t stack_size = STKSIZE;  // Default stack size
+    short is_detached = 0;
+    short sched_policy = DEFAULT_SCHED_POLICY;
+    short thread_priority = -1;  // -1 means use default priority calculation
+
+    pthread_attr_t *attr = (pthread_attr_t *)attr_ptr;
+    
+    // Extract attributes if provided
+    if (attr) {
+        if (attr->stacksize > 0) {
+            stack_size = attr->stacksize;
+        }
+        is_detached = (attr->detachstate == PTHREAD_CREATE_DETACHED);
+        
+        // Handle scheduling policy
+        if (attr->policy > 0) {
+            sched_policy = attr->policy;
+        }
+        
+        // Handle priority (validate range)
+        if (attr->priority > 0) {
+            // Clamp priority to valid range
+            thread_priority = MIN(MAX(attr->priority, 1), MAX_THREAD_PRIORITY);
+        }
+    }
     
     // Allocate thread structure
     sr = splhigh();  // Disable interrupts before allocation to prevent race conditions
@@ -61,10 +95,11 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
         return ENOMEM;
     }
     TRACE_THREAD("KMALLOC: Allocated thread structure at %p", t);
-    TRACE_THREAD("Creating thread: pid=%d, func=%p, arg=%p", p->pid, func, arg);
+    TRACE_THREAD("Creating thread: pid=%d, func=%p, arg=%p, stack_size=%zu, policy=%d, priority=%d", 
+                 p->pid, func, arg, stack_size, sched_policy, 
+                 (thread_priority > 0) ? thread_priority : t->priority);
     
     // Basic initialization
-    // memset(t, 0, sizeof(struct thread));
     mint_bzero (t, sizeof(*t));
 
     t->tid = p->total_threads++;
@@ -73,12 +108,19 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     t->proc = p;
 
     t->is_idle = 0;  // Not an idle thread
+
+    /* Set thread priority - use attribute if specified, otherwise inherit from process */
+    if (thread_priority > 0) {
+        t->priority = thread_priority;
+        t->original_priority = thread_priority;
+        TRACE_THREAD("Using attribute priority %d for thread %d", thread_priority, t->tid);
+    } else {
+        /* Map process priority to thread priority (keep positive values) */
+        t->priority = MAX(scale_thread_priority(-p->pri), 1);
+        t->original_priority = t->priority;
+    }
     
-    /* Map process priority to thread priority (keep positive values) */
-    t->priority = MAX(scale_thread_priority(-p->pri), 1);
-    t->original_priority = t->priority;
-    
-    t->policy = DEFAULT_SCHED_POLICY;
+    t->policy = sched_policy;
     t->timeslice = t->proc->thread_default_timeslice;
     t->remaining_timeslice = t->proc->thread_default_timeslice;
     t->last_scheduled = 0;
@@ -103,12 +145,8 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
         t->sig_handlers[i].handler = NULL;
         t->sig_handlers[i].arg = NULL;
     }
-    // Allocate stack
-    if(stack_ptr != NULL){
-        t->stack = stack_ptr;
-    } else {
-        t->stack = kmalloc(STKSIZE);
-    }
+
+    t->stack = kmalloc(stack_size);
     if (!t->stack) {
 		p->num_threads--;  // Revert the thread count increment
         TRACE_THREAD("KFREE: Stack allocation failed");
@@ -116,9 +154,11 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
         spl(sr);
         return ENOMEM;
     }
-    TRACE_THREAD("KMALLOC: Allocated stack at %p for thread %d", t->stack, t->tid);
+    TRACE_THREAD("KMALLOC: Allocated stack at %p for thread %d (size %zu)", 
+                 t->stack, t->tid, stack_size);
     
-    t->stack_top = (char*)t->stack + STKSIZE;
+    t->stack_top = (char*)t->stack + stack_size;  // Use actual stack size
+    t->stack_size = stack_size;  // Store stack size in thread structure
     t->stack_magic = STACK_MAGIC;
     t->magic = CTXT_MAGIC;
     
@@ -140,14 +180,15 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     // Initialize join-related fields
     t->retval = NULL;
     t->joiner = NULL;
-    t->detached = 0;  // Default is joinable
+    t->detached = is_detached;  // Set detached state from attributes
     t->joined = 0;
 
     t->cancel_state = PTHREAD_CANCEL_ENABLE;
     t->cancel_type = PTHREAD_CANCEL_DEFERRED;
     t->cancel_pending = 0;
     
-    TRACE_THREAD("Thread %d stack: base=%p, top=%p", t->tid, t->stack, t->stack_top);
+        TRACE_THREAD("Thread %d stack: base=%p, top=%p, size=%zu", 
+                 t->tid, t->stack, t->stack_top, stack_size);
     
     init_thread_cleanup(t);
     init_thread_tsd(t);

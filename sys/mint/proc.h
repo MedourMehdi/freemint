@@ -37,6 +37,11 @@
 
 /* Threads stuff */
 
+#ifndef __SIZE_T
+#define __SIZE_T
+typedef unsigned long size_t;
+#endif
+
 enum sched_policy {
     SCHED_FIFO,
     SCHED_RR,
@@ -58,7 +63,8 @@ struct thread {
     void *stack;                    /* Stack base address */
     void *stack_top;                /* Top of stack area */
     unsigned long stack_magic;      /* Stack integrity check */
-    
+    size_t stack_size;               /* Stack size in bytes */
+
     /* Thread context */
     CONTEXT ctxt[PROC_CTXTS];       /* Thread context (reuse FreeMiNT's context) */
     

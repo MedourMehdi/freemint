@@ -137,8 +137,6 @@ typedef struct {
     size_t stacksize;
     int policy;
     int priority;
-    void *stackaddr;
-    size_t guardsize;
 } pthread_attr_t;
 
 /* Internal structures */
@@ -273,7 +271,8 @@ static inline int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     if (!thread || !start_routine)
         return EINVAL;
     
-    tid = Pexec(PE_THREAD, start_routine, arg, NULL);
+    // Pass attributes to the kernel (can be NULL)
+    tid = Pexec(PE_THREAD, start_routine, arg, (void*)attr);
     
     if (tid < 0) {
         switch (tid) {
@@ -287,11 +286,6 @@ static inline int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     }
     
     *thread = (pthread_t)tid;
-    
-    // If detached state is requested, detach the thread
-    if (attr && attr->detachstate == PTHREAD_CREATE_DETACHED) {
-        sys_p_thread_sync(THREAD_SYNC_DETACH, tid, 0);
-    }
     
     return 0;
 }
@@ -414,10 +408,8 @@ static inline int pthread_attr_init(pthread_attr_t *attr)
     
     attr->detachstate = PTHREAD_CREATE_JOINABLE;
     attr->stacksize = 0;  // Default stack size
-    attr->policy = SCHED_OTHER;
+    attr->policy = SCHED_FIFO;
     attr->priority = 0;
-    attr->stackaddr = NULL;
-    attr->guardsize = 0;
     
     return 0;
 }
