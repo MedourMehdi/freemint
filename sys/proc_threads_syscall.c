@@ -398,6 +398,27 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
         case THREAD_TSD_SET_SPECIFIC:
             return thread_setspecific(arg1, (void*)arg2);
 
+        case THREAD_SYNC_RWLOCK_INIT:
+            return thread_rwlock_init();
+
+        case THREAD_SYNC_RWLOCK_DESTROY:
+            return thread_rwlock_destroy(arg1);
+            
+        case THREAD_SYNC_RWLOCK_RDLOCK:
+            return thread_rwlock_rdlock(arg1);
+            
+        case THREAD_SYNC_RWLOCK_TRYRDLOCK:
+            return thread_rwlock_tryrdlock(arg1);
+            
+        case THREAD_SYNC_RWLOCK_WRLOCK:
+            return thread_rwlock_wrlock(arg1);
+            
+        case THREAD_SYNC_RWLOCK_TRYWRLOCK:
+            return thread_rwlock_trywrlock(arg1);
+            
+        case THREAD_SYNC_RWLOCK_UNLOCK:
+            return thread_rwlock_unlock(arg1);
+
         default:
             TRACE_THREAD("THREAD_SYNC_UNKNOWN: %d", operator);
             return EINVAL;

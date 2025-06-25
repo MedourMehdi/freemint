@@ -553,6 +553,31 @@ int thread_mutex_unlock(struct mutex *mutex) {
     return THREAD_SUCCESS;
 }
 
+/**
+ * Destroy a mutex
+ */
+int thread_mutex_destroy(struct mutex *mutex) {
+    if (!mutex) {
+        return EINVAL;
+    }
+
+    register unsigned short sr = splhigh();
+
+    // Check if mutex is locked or has waiters
+    if (mutex->locked || mutex->wait_queue) {
+        TRACE_THREAD("MUTEX DESTROY: mutex=%p is locked or has waiters", mutex);
+        spl(sr);
+        return EBUSY;
+    }
+
+    // Reset mutex state
+    mutex->locked = 0;
+    mutex->owner = NULL;
+
+    spl(sr);
+    return THREAD_SUCCESS;
+}
+
 // Semaphore implementation
 int thread_semaphore_down(struct semaphore *sem) {
     if (!sem) {
@@ -1187,4 +1212,170 @@ static void cleanup_process_semaphores(struct proc *p)
             t->next_wait = NULL;
         }
     }
+}
+
+/* Initialize RWLock - returns handle ID for userspace */
+long thread_rwlock_init(void) {
+    struct rwlock *rw = kmalloc(sizeof(struct rwlock));
+    if (!rw) 
+        return -ENOMEM;
+    
+    int result = thread_mutex_init(&rw->lock);
+    if (result != THREAD_SUCCESS) {
+        kfree(rw);
+        return -result;
+    }
+    
+    result = proc_thread_condvar_init(&rw->readers_ok);
+    if (result != 0) {
+        kfree(rw);
+        return -result;
+    }
+    
+    result = proc_thread_condvar_init(&rw->writers_ok);
+    if (result != 0) {
+        proc_thread_condvar_destroy(&rw->readers_ok);
+        kfree(rw);
+        return -result;
+    }
+    
+    rw->readers = 0;
+    rw->writers = 0;
+    rw->waiting_writers = 0;
+    rw->waiting_readers = 0;
+    
+    // In a real implementation, you'd want to store this in a handle table
+    // For now, return the pointer as a handle (not safe for production)
+    return (long)rw;
+}
+
+/* Destroy RWLock */
+long thread_rwlock_destroy(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) 
+        return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    // Check for active users
+    if (rw->readers || rw->writers || rw->waiting_writers || rw->waiting_readers) {
+        thread_mutex_unlock(&rw->lock);
+        return -EBUSY;
+    }
+    
+    thread_mutex_unlock(&rw->lock);
+    
+    proc_thread_condvar_destroy(&rw->readers_ok);
+    proc_thread_condvar_destroy(&rw->writers_ok);
+    thread_mutex_destroy(&rw->lock);
+    kfree(rw);
+    return 0;
+}
+
+/* Reader Lock */
+long thread_rwlock_rdlock(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    // Writer-preference: wait if writers active or waiting
+    while (rw->writers > 0 || rw->waiting_writers > 0) {
+        rw->waiting_readers++;
+        proc_thread_condvar_wait(&rw->readers_ok, &rw->lock);
+        rw->waiting_readers--;
+    }
+    
+    rw->readers++;
+    thread_mutex_unlock(&rw->lock);
+    return 0;
+}
+
+/* Try Reader Lock (non-blocking) */
+long thread_rwlock_tryrdlock(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    // Check if writers active or waiting
+    if (rw->writers > 0 || rw->waiting_writers > 0) {
+        thread_mutex_unlock(&rw->lock);
+        return -EBUSY;
+    }
+    
+    rw->readers++;
+    thread_mutex_unlock(&rw->lock);
+    return 0;
+}
+
+/* Writer Lock */
+long thread_rwlock_wrlock(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    // Wait while readers active or another writer active
+    while (rw->readers > 0 || rw->writers > 0) {
+        rw->waiting_writers++;
+        proc_thread_condvar_wait(&rw->writers_ok, &rw->lock);
+        rw->waiting_writers--;
+    }
+    
+    rw->writers = 1;
+    thread_mutex_unlock(&rw->lock);
+    return 0;
+}
+
+/* Try Writer Lock (non-blocking) */
+long thread_rwlock_trywrlock(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    // Check if readers or writers active
+    if (rw->readers > 0 || rw->writers > 0) {
+        thread_mutex_unlock(&rw->lock);
+        return -EBUSY;
+    }
+    
+    rw->writers = 1;
+    thread_mutex_unlock(&rw->lock);
+    return 0;
+}
+
+/* Unlock RWLock */
+long thread_rwlock_unlock(long handle) {
+    struct rwlock *rw = (struct rwlock *)handle;
+    if (!rw) return -EINVAL;
+    
+    thread_mutex_lock(&rw->lock);
+    
+    if (rw->writers) {
+        // Writer unlocking
+        rw->writers = 0;
+        if (rw->waiting_writers > 0) {
+            // Prioritize waiting writers
+            proc_thread_condvar_signal(&rw->writers_ok);
+        } else if (rw->waiting_readers > 0) {
+            // Wake all waiting readers
+            proc_thread_condvar_broadcast(&rw->readers_ok);
+        }
+    } else if (rw->readers > 0) {
+        // Reader unlocking
+        rw->readers--;
+        if (rw->readers == 0 && rw->waiting_writers > 0) {
+            // Last reader wakes waiting writer
+            proc_thread_condvar_signal(&rw->writers_ok);
+        }
+    } else {
+        // Lock not held
+        thread_mutex_unlock(&rw->lock);
+        return -EPERM;
+    }
+    
+    thread_mutex_unlock(&rw->lock);
+    return 0;
 }

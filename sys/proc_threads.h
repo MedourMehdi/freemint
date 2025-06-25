@@ -144,6 +144,15 @@
 #define THREAD_TSD_GET_SPECIFIC  23   /* Get thread-specific data */
 #define THREAD_TSD_SET_SPECIFIC  24   /* Set thread-specific data */
 
+/* Reader-writer lock operations */
+#define THREAD_SYNC_RWLOCK_INIT      25
+#define THREAD_SYNC_RWLOCK_DESTROY   26
+#define THREAD_SYNC_RWLOCK_RDLOCK    27
+#define THREAD_SYNC_RWLOCK_WRLOCK    28
+#define THREAD_SYNC_RWLOCK_UNLOCK    29
+#define THREAD_SYNC_RWLOCK_TRYRDLOCK 30
+#define THREAD_SYNC_RWLOCK_TRYWRLOCK 31
+
 /* Thread cancellation constants */
 #define PTHREAD_CANCEL_ENABLE       0   /* Enable cancellation */
 #define PTHREAD_CANCEL_DISABLE      1   /* Disable cancellation */

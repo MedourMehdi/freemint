@@ -37,6 +37,17 @@ struct condvar {
     long timeout_ms;                /* Timeout value in milliseconds */
 };
 
+/* Read-Write Lock Structure */
+struct rwlock {
+    struct mutex lock;          // Mutex protecting internal state
+    struct condvar readers_ok;  // Readers condition variable
+    struct condvar writers_ok;  // Writers condition variable
+    int readers;                // Active readers count
+    int writers;                // Active writers (0 or 1)
+    int waiting_writers;        // Writers waiting for access
+    int waiting_readers;        // Readers waiting for access
+};
+
 long proc_thread_join(long tid, void **retval);
 long proc_thread_tryjoin(long tid, void **retval);
 long proc_thread_detach(long tid);
@@ -50,12 +61,23 @@ int thread_mutex_unlock(struct mutex *mutex);
 int thread_mutex_lock(struct mutex *mutex);
 // Function to initialize a mutex
 int thread_mutex_init(struct mutex *mutex);
+// Function to destroy a mutex
+int thread_mutex_destroy(struct mutex *mutex);
+
 // Function to up a semaphore
 int thread_semaphore_up(struct semaphore *sem);
 // Function to down a semaphore
 int thread_semaphore_down(struct semaphore *sem);
 // Function to initialize a semaphore
 int thread_semaphore_init(struct semaphore *sem, short count);
+
+long thread_rwlock_init(void);
+long thread_rwlock_destroy(long handle);
+long thread_rwlock_rdlock(long handle);
+long thread_rwlock_tryrdlock(long handle);
+long thread_rwlock_wrlock(long handle);
+long thread_rwlock_trywrlock(long handle);
+long thread_rwlock_unlock(long handle);
 
 /* Condition variable functions */
 int proc_thread_condvar_init(struct condvar *cond);

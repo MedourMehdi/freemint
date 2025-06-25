@@ -60,6 +60,15 @@ extern "C" {
 #define THREAD_TSD_GET_SPECIFIC  23   /* Get thread-specific data */
 #define THREAD_TSD_SET_SPECIFIC  24   /* Set thread-specific data */
 
+/* Reader-writer lock operations */
+#define THREAD_SYNC_RWLOCK_INIT      25
+#define THREAD_SYNC_RWLOCK_DESTROY   26
+#define THREAD_SYNC_RWLOCK_RDLOCK    27
+#define THREAD_SYNC_RWLOCK_WRLOCK    28
+#define THREAD_SYNC_RWLOCK_UNLOCK    29
+#define THREAD_SYNC_RWLOCK_TRYRDLOCK 30
+#define THREAD_SYNC_RWLOCK_TRYWRLOCK 31
+
 /* Thread operation modes for sys_p_thread_ctrl */
 #define THREAD_CTRL_EXIT     0   /* Exit the current thread */
 #define THREAD_CTRL_CANCEL   1   /* Cancel a thread */
@@ -186,13 +195,8 @@ typedef unsigned int pthread_key_t;
 /* Thread once control */
 typedef int pthread_once_t;
 
-/* Read-write lock */
-typedef struct {
-    pthread_mutex_t mutex;
-    int readers;
-    int writers;
-    int writer_waiting;
-} pthread_rwlock_t;
+/* Read-write lock - opaque handle */
+typedef long pthread_rwlock_t;
 
 typedef struct {
     int type;
@@ -211,6 +215,7 @@ typedef struct {
     int type;
 } pthread_condattr_t;
 
+
 /* Constants */
 #define PTHREAD_CREATE_JOINABLE  0
 #define PTHREAD_CREATE_DETACHED  1
@@ -223,7 +228,7 @@ typedef struct {
 #define PTHREAD_ONCE_INIT        0
 
 #define PTHREAD_MUTEX_INITIALIZER {0, 0, NULL}
-#define PTHREAD_RWLOCK_INITIALIZER {PTHREAD_MUTEX_INITIALIZER, 0, 0, 0}
+#define PTHREAD_RWLOCK_INITIALIZER 0
 #define PTHREAD_COND_INITIALIZER {NULL, NULL, CONDVAR_MAGIC, 0, 0}
 
 /* MiNT system call wrappers */
@@ -780,166 +785,61 @@ static inline int pthread_once(pthread_once_t *once_control, void (*init_routine
     return 0;
 }
 
-/* Read-write lock functions */
+/* Read-Write Lock Functions */
+static inline int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr) {
+    (void)attr;
+    if (!rwlock) return EINVAL;
+    
+    long handle = sys_p_thread_sync(THREAD_SYNC_RWLOCK_INIT, 0, 0);
+    if (handle < 0) return (int)(-handle);
+    
+    *rwlock = handle;
+     return 0;
+}
 
-/**
- * Initialize a read-write lock
- */
-static inline int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr)
-{
-    if (!rwlock)
-        return EINVAL;
+static inline int pthread_rwlock_destroy(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    int result = pthread_mutex_init(&rwlock->mutex, NULL);
-    if (result != 0)
-        return result;
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_DESTROY, *rwlock, 0);
+    if (result < 0) return (int)(-result);
     
-    rwlock->readers = 0;
-    rwlock->writers = 0;
-    rwlock->writer_waiting = 0;
-    
+    *rwlock = 0;
     return 0;
 }
 
-/**
- * Destroy a read-write lock
- */
-static inline int pthread_rwlock_destroy(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
+static inline int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    if (rwlock->readers > 0 || rwlock->writers > 0)
-        return EBUSY;
-    
-    return pthread_mutex_destroy(&rwlock->mutex);
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_RDLOCK, *rwlock, 0);
+    return (result < 0) ? (int)(-result) : 0;
 }
 
-/**
- * Acquire a read lock
- */
-static inline int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
+static inline int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    int result = pthread_mutex_lock(&rwlock->mutex);
-    if (result != 0)
-        return result;
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_TRYRDLOCK, *rwlock, 0);
+    return (result < 0) ? (int)(-result) : 0;
+}
+ 
+static inline int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    /* Wait while there are writers or a writer is waiting */
-    while (rwlock->writers > 0 || rwlock->writer_waiting > 0) {
-        pthread_mutex_unlock(&rwlock->mutex);
-        proc_thread_sleep(1);  // Sleep for 1ms
-        result = pthread_mutex_lock(&rwlock->mutex);
-        if (result != 0)
-            return result;
-    }
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_WRLOCK, *rwlock, 0);
+    return (result < 0) ? (int)(-result) : 0;
+}
+ 
+static inline int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    rwlock->readers++;
-    
-    return pthread_mutex_unlock(&rwlock->mutex);
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_TRYWRLOCK, *rwlock, 0);
+    return (result < 0) ? (int)(-result) : 0;
 }
 
-/**
- * Try to acquire a read lock (non-blocking)
- */
-static inline int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
+static inline int pthread_rwlock_unlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock || *rwlock == 0) return EINVAL;
     
-    int result = pthread_mutex_lock(&rwlock->mutex);
-    if (result != 0)
-        return result;
-    
-    /* Check if there are writers or a writer is waiting */
-    if (rwlock->writers > 0 || rwlock->writer_waiting > 0) {
-        pthread_mutex_unlock(&rwlock->mutex);
-        return EBUSY;
-    }
-    
-    rwlock->readers++;
-    
-    return pthread_mutex_unlock(&rwlock->mutex);
-}
-
-/**
- * Acquire a write lock
- */
-static inline int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
-    
-    int result = pthread_mutex_lock(&rwlock->mutex);
-    if (result != 0)
-        return result;
-    
-    rwlock->writer_waiting++;
-    
-    /* Wait while there are readers or writers */
-    while (rwlock->readers > 0 || rwlock->writers > 0) {
-        pthread_mutex_unlock(&rwlock->mutex);
-        proc_thread_sleep(1);  // Sleep for 1ms
-        result = pthread_mutex_lock(&rwlock->mutex);
-        if (result != 0) {
-            rwlock->writer_waiting--;
-            return result;
-        }
-    }
-    
-    rwlock->writer_waiting--;
-    rwlock->writers++;
-    
-    return pthread_mutex_unlock(&rwlock->mutex);
-}
-
-/**
- * Try to acquire a write lock (non-blocking)
- */
-static inline int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
-    
-    int result = pthread_mutex_lock(&rwlock->mutex);
-    if (result != 0)
-        return result;
-    
-    /* Check if there are readers or writers */
-    if (rwlock->readers > 0 || rwlock->writers > 0) {
-        pthread_mutex_unlock(&rwlock->mutex);
-        return EBUSY;
-    }
-    
-    rwlock->writers++;
-    
-    return pthread_mutex_unlock(&rwlock->mutex);
-}
-
-/**
- * Release a read-write lock
- */
-static inline int pthread_rwlock_unlock(pthread_rwlock_t *rwlock)
-{
-    if (!rwlock)
-        return EINVAL;
-    
-    int result = pthread_mutex_lock(&rwlock->mutex);
-    if (result != 0)
-        return result;
-    
-    if (rwlock->readers > 0)
-        rwlock->readers--;
-    else if (rwlock->writers > 0)
-        rwlock->writers--;
-    else {
-        pthread_mutex_unlock(&rwlock->mutex);
-        return EPERM;  // Not locked
-    }
-    
-    return pthread_mutex_unlock(&rwlock->mutex);
+    long result = sys_p_thread_sync(THREAD_SYNC_RWLOCK_UNLOCK, *rwlock, 0);
+    return (result < 0) ? (int)(-result) : 0;
 }
 
 /* Condition variable functions */
