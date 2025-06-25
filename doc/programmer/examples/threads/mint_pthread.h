@@ -72,6 +72,7 @@ extern "C" {
 /* Thread operation modes for sys_p_thread_ctrl */
 #define THREAD_CTRL_EXIT     0   /* Exit the current thread */
 #define THREAD_CTRL_CANCEL   1   /* Cancel a thread */
+
 #define THREAD_CTRL_STATUS   4   /* Get thread status */
 #define THREAD_CTRL_GETID    5	/* Get thread ID */
 #define THREAD_CTRL_SETCANCELSTATE 6
@@ -79,6 +80,9 @@ extern "C" {
 #define THREAD_CTRL_TESTCANCEL     8
 #define THREAD_CTRL_SETNAME  9   /* Set thread name */
 #define THREAD_CTRL_GETNAME  10  /* Get thread name */
+
+#define THREAD_CTRL_IS_INITIAL        13  /* Check if current thread is initial */
+#define THREAD_CTRL_IS_MULTITHREADED  14  /* Check if process is multithreaded */
 
 #define THREAD_STATE_RUNNING    0x0001
 #define THREAD_STATE_READY      0x0002
@@ -2064,6 +2068,19 @@ static inline int pthread_setspecific(pthread_key_t key, const void *value)
     return 0;
 }
 
+/**
+ * Set the name of the given thread
+ * 
+ * @param thread The thread to set the name for
+ * @param name The new name for the thread (up to 15 characters)
+ * @return 0 on success, error code on failure
+ * 
+ * Note that the name is limited to 15 characters, and the NUL terminator is
+ * not included in this limit. If the name is too long, ERANGE is returned.
+ * 
+ * This function is not part of the standard POSIX threads API, but is
+ * included here as a convenience for debugging purposes.
+ */
 static inline int pthread_setname_np(pthread_t thread, const char *name) {
     if (!name) return EINVAL;
     
@@ -2075,12 +2092,43 @@ static inline int pthread_setname_np(pthread_t thread, const char *name) {
     return (result < 0) ? -result : 0;
 }
 
+/**
+ * Retrieve the name of a given thread.
+ * 
+ * @param thread The thread whose name is to be retrieved.
+ * @param name A buffer to store the retrieved name.
+ * @param len The length of the buffer. Must be at least 16.
+ * @return 0 on success, or an error code on failure.
+ *         Returns EINVAL if name is NULL or len is 0,
+ *         and ERANGE if the buffer length is less than 16.
+ */
+
 static inline int pthread_getname_np(pthread_t thread, char *name, size_t len) {
     if (!name || len == 0) return EINVAL;
     if (len < 16) return ERANGE; // Buffer too small
     
     long result = sys_p_thread_ctrl(THREAD_CTRL_GETNAME, thread, (long)name);
     return (result < 0) ? -result : 0;
+}
+
+/**
+ * Check if current thread is the initial thread
+ * 
+ * @return Non-zero if initial thread, 0 otherwise
+ */
+static inline int pthread_is_initialthread_np(void)
+{
+    return sys_p_thread_ctrl(THREAD_CTRL_IS_INITIAL, 0, 0);
+}
+
+/**
+ * Check if process is multithreaded
+ * 
+ * @return Non-zero if multithreaded, 0 if single-threaded
+ */
+static inline int pthread_is_multithreaded_np(void)
+{
+    return sys_p_thread_ctrl(THREAD_CTRL_IS_MULTITHREADED, 0, 0);
 }
 
 /* Utility macros */
@@ -2134,11 +2182,6 @@ Here's a list of pthread functions that would benefit from proper kernel-level i
 
 6. **Barriers**
    - `pthread_barrier_wait` - Needs efficient implementation
-
-7. **Read-Write Locks**
-   - `pthread_rwlock_rdlock` - Needs efficient implementation
-   - `pthread_rwlock_wrlock` - Needs efficient implementation
-   - `pthread_rwlock_unlock` - Needs efficient implementation
 
 8. **Spinlocks**
    - `pthread_spin_lock` - Needs CPU-specific optimizations

@@ -95,6 +95,9 @@
 #define THREAD_CTRL_SETNAME  9   /* Set thread name */
 #define THREAD_CTRL_GETNAME  10  /* Get thread name */
 
+#define THREAD_CTRL_IS_INITIAL        13  /* Check if current thread is initial */
+#define THREAD_CTRL_IS_MULTITHREADED  14  /* Check if process is multithreaded */
+
 /* Wait types as bitfields */
 #define WAIT_NONE       0x0000  /* Not waiting */
 #define WAIT_JOIN       0x0001  /* Waiting for thread to exit */

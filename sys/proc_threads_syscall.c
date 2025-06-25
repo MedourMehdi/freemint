@@ -172,6 +172,18 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
             return 0;
         }
 
+        case THREAD_CTRL_IS_INITIAL: {
+            struct thread *t = CURTHREAD;
+            if (!t) return 0; // Not a thread? Then not initial
+            return (t->tid == 0) ? 1 : 0;
+        }
+
+        case THREAD_CTRL_IS_MULTITHREADED: {
+            struct proc *p = curproc;
+            if (!p || !p->threads) return 0;
+            return (p->num_threads > 1) ? 1 : 0;
+        }
+        
         default:
             TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid mode %d", mode);
             return EINVAL;
@@ -345,10 +357,13 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
             TRACE_THREAD("TRYJOIN: proc_thread_tryjoin called for tid=%ld", arg1);
             // New non-blocking join
             return proc_thread_tryjoin(arg1, (void **)arg2);
+
         case THREAD_SYNC_SLEEP:
             return proc_thread_sleep((long)arg1);
+
         case THREAD_SYNC_YIELD:
             return proc_thread_yield();
+
         case THREAD_SYNC_COND_INIT:
             TRACE_THREAD("THREAD_SYNC_COND_INIT");
             return proc_thread_condvar_init((struct condvar *)arg1);
