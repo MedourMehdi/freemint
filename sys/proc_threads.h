@@ -92,6 +92,8 @@
 #define THREAD_CTRL_SETCANCELSTATE 6
 #define THREAD_CTRL_SETCANCELTYPE  7
 #define THREAD_CTRL_TESTCANCEL     8
+#define THREAD_CTRL_SETNAME  9   /* Set thread name */
+#define THREAD_CTRL_GETNAME  10  /* Get thread name */
 
 /* Wait types as bitfields */
 #define WAIT_NONE       0x0000  /* Not waiting */

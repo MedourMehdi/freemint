@@ -68,6 +68,8 @@ extern "C" {
 #define THREAD_CTRL_SETCANCELSTATE 6
 #define THREAD_CTRL_SETCANCELTYPE  7
 #define THREAD_CTRL_TESTCANCEL     8
+#define THREAD_CTRL_SETNAME  9   /* Set thread name */
+#define THREAD_CTRL_GETNAME  10  /* Get thread name */
 
 #define THREAD_STATE_RUNNING    0x0001
 #define THREAD_STATE_READY      0x0002
@@ -318,7 +320,7 @@ static inline int pthread_yield(void)
  * @return 0 on success, error code on failure
  */
 
-int pthread_tryjoin(pthread_t thread, void **retval)
+static int pthread_tryjoin_np(pthread_t thread, void **retval)
 {
     while (1) {
         long status = proc_thread_status(thread);
@@ -1472,26 +1474,6 @@ static inline int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id)
     return 0;
 }
 
-/**
- * Set thread name (not supported in FreeMiNT)
- */
-static inline int pthread_setname_np(pthread_t thread, const char *name)
-{
-    return ENOSYS;  // Not supported
-}
-
-/**
- * Get thread name (not supported in FreeMiNT)
- */
-static inline int pthread_getname_np(pthread_t thread, char *name, size_t len)
-{
-    if (!name || len == 0)
-        return EINVAL;
-    
-    name[0] = '\0';
-    return ENOSYS;  // Not supported
-}
-
 /* Optimized mutex implementation for single-CPU systems */
 
 /**
@@ -2182,6 +2164,25 @@ static inline int pthread_setspecific(pthread_key_t key, const void *value)
     return 0;
 }
 
+static inline int pthread_setname_np(pthread_t thread, const char *name) {
+    if (!name) return EINVAL;
+    
+    // Check length before syscall
+    size_t len = strnlen(name, 16);
+    if (len >= 16) return ERANGE;
+    
+    long result = sys_p_thread_ctrl(THREAD_CTRL_SETNAME, thread, (long)name);
+    return (result < 0) ? -result : 0;
+}
+
+static inline int pthread_getname_np(pthread_t thread, char *name, size_t len) {
+    if (!name || len == 0) return EINVAL;
+    if (len < 16) return ERANGE; // Buffer too small
+    
+    long result = sys_p_thread_ctrl(THREAD_CTRL_GETNAME, thread, (long)name);
+    return (result < 0) ? -result : 0;
+}
+
 /* Utility macros */
 
 /**
@@ -2231,34 +2232,6 @@ static inline int pthread_setspecific(pthread_key_t key, const void *value)
 
 Here's a list of pthread functions that would benefit from proper kernel-level implementation in FreeMiNT:
 
-1. **Thread Management**
-   - `pthread_join` - Needs proper kernel support for thread waiting
-   - `pthread_detach` - Needs kernel support for resource cleanup
-   - `pthread_cancel` - Currently a stub, needs full cancellation support
-   - `pthread_setname_np` - For thread naming/debugging
-   - `pthread_getname_np` - For thread naming/debugging
-
-2. **Condition Variables**
-   - `pthread_cond_signal` - Needs proper thread wakeup mechanism
-   - `pthread_cond_broadcast` - Needs proper thread wakeup mechanism
-   - `pthread_cond_wait` - Needs proper thread blocking mechanism
-   - `pthread_cond_timedwait` - Needs proper timeout handling
-
-3. **Thread-Specific Data**
-   - `pthread_key_create` - Needs per-thread storage in kernel
-   - `pthread_getspecific` - Needs per-thread storage in kernel
-   - `pthread_setspecific` - Needs per-thread storage in kernel
-
-4. **Scheduling**
-   - `pthread_setschedparam` - Needs full scheduler integration
-   - `pthread_getschedparam` - Needs full scheduler integration
-   - `pthread_setschedprio` - Needs full scheduler integration
-
-5. **Cancellation Points**
-   - `pthread_testcancel` - Needs cancellation support
-   - `pthread_setcancelstate` - Needs cancellation support
-   - `pthread_setcanceltype` - Needs cancellation support
-
 6. **Barriers**
    - `pthread_barrier_wait` - Needs efficient implementation
 
@@ -2270,14 +2243,6 @@ Here's a list of pthread functions that would benefit from proper kernel-level i
 8. **Spinlocks**
    - `pthread_spin_lock` - Needs CPU-specific optimizations
    - `pthread_spin_unlock` - Needs CPU-specific optimizations
-
-9. **Signal Handling**
-   - `pthread_sigmask` - Needs per-thread signal masks
-   - `pthread_kill` - Needs thread-specific signal delivery
-
-10. **Cleanup Handlers**
-    - `pthread_cleanup_push` - Needs stack unwinding support
-    - `pthread_cleanup_pop` - Needs stack unwinding support
 
 This list represents the functions that would most benefit from kernel-level implementation to improve performance, correctness, and POSIX compliance in FreeMiNT's threading system.
 

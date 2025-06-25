@@ -106,7 +106,7 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     p->num_threads++;
     // Link into process
     t->proc = p;
-
+    t->name[0] = '\0'; // Initialize to empty string
     t->is_idle = 0;  // Not an idle thread
 
     /* Set thread priority - use attribute if specified, otherwise inherit from process */
@@ -327,7 +327,8 @@ static void init_main_thread_context(struct proc *p) {
     mint_bzero (t0, sizeof(*t0));
     t0->tid = 0;
     t0->proc = p;
-    // t0->priority = p->pri;
+    strncpy(t0->name, p->name, 15);
+    t0->name[15] = '\0'; // Ensure null termination
     t0->priority = 1;
     t0->original_priority = 1;
 
@@ -531,6 +532,8 @@ static struct thread* create_idle_thread(struct proc *p) {
     idle->tid = -128;  // Negative tid to indicate idle thread
     // Don't increment p->num_threads for idle thread
     idle->proc = p;
+    strncpy(idle->name, "idle", 15);
+    idle->name[15] = '\0';
     idle->priority = 0;  // Lowest possible priority
     idle->original_priority = 0;
     idle->is_idle = 1;      // Mark as idle thread

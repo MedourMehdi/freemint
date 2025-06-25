@@ -148,6 +148,30 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
         case THREAD_CTRL_GETID:
             return sys_p_thread_getid();
 
+        case THREAD_CTRL_SETNAME: {
+            short tid = (short)arg1;
+            char *user_name = (char *)arg2;
+            struct thread *target = get_thread_by_id(curproc, tid);
+            if (!target) return ESRCH;
+
+            char kname[16];
+            if (copyin(user_name, kname, 16)) return EFAULT;
+            kname[15] = '\0'; // Ensure null termination
+            
+            strcpy(target->name, kname);
+            return 0;
+        }
+        
+        case THREAD_CTRL_GETNAME: {
+            short tid = (short)arg1;
+            char *user_buf = (char *)arg2;
+            struct thread *target = get_thread_by_id(curproc, tid);
+            if (!target) return ESRCH;
+            
+            if (copyout(target->name, user_buf, 16)) return EFAULT;
+            return 0;
+        }
+
         default:
             TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid mode %d", mode);
             return EINVAL;

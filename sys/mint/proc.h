@@ -58,7 +58,8 @@ struct thread {
     /* Thread identification */
     short tid;                      /* Thread ID */
     struct proc *proc;              /* Parent process */
-    
+    char name[16];                  /* Thread name */
+	
     /* Stack information */
     void *stack;                    /* Stack base address */
     void *stack_top;                /* Top of stack area */
