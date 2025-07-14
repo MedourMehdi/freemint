@@ -124,6 +124,7 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     t->timeslice = t->proc->thread_default_timeslice;
     t->remaining_timeslice = t->proc->thread_default_timeslice;
     t->last_scheduled = 0;
+
     t->priority_boost = (t->tid > 0) ? 1 : 0;
     if (t->tid > 0) {
         t->priority = THREAD_CREATION_PRIORITY_BOOST;
@@ -358,6 +359,8 @@ static void init_main_thread_context(struct proc *p) {
     t0->wait_type = WAIT_NONE;  // Not waiting for anything initially
     t0->sleep_reason = 0;  // No sleep reason initially
     
+    t0->last_scheduled = 0;
+
     // Initialize join-related fields
     t0->retval = NULL;
     t0->joiner = NULL;
@@ -552,6 +555,7 @@ static struct thread* create_idle_thread(struct proc *p) {
     idle->timeslice = p->thread_default_timeslice;
     idle->remaining_timeslice = p->thread_default_timeslice;
     idle->last_scheduled = 0;
+ 
     idle->priority_boost = 0;
 
     idle->tsd_data = NULL;

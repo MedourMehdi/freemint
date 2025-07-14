@@ -21,7 +21,7 @@
 #include "proc_threads_helper.h"
 #include "proc_threads_tsd.h"
 #include "proc_threads_cleanup.h"
-
+#include "proc_threads_atomic.h"
 #include "proc_threads_queue.h"
 
 #ifndef __SIZE_T
@@ -184,6 +184,54 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
             return (p->num_threads > 1) ? 1 : 0;
         }
         
+        case THREAD_CTRL_SWITCH_TO_MAIN: {
+            struct proc *p = curproc;
+            if (!p) {
+                return EINVAL;
+            }
+
+            struct thread *main_thread = get_main_thread(p);
+            if (!main_thread || main_thread->magic != CTXT_MAGIC) {
+                return ESRCH;
+            }
+
+            struct thread *current = p->current_thread;
+            if (!current) {
+                return EINVAL;
+            }
+
+            // Already on main thread
+            if (current->tid == 0) {
+                return 0;
+            }
+
+            // Check if main thread is runnable
+            if (main_thread->state != THREAD_STATE_READY) {
+                return EAGAIN;
+            }
+
+            register unsigned short sr = splhigh();
+
+            // Prepare current thread for rescheduling
+            atomic_thread_state_change(current, THREAD_STATE_READY);
+            add_to_ready_queue(current);
+
+            // Prepare main thread for execution
+            atomic_thread_state_change(main_thread, THREAD_STATE_RUNNING);
+            p->current_thread = main_thread;
+
+            // Remove main thread from queues if present
+            if (is_in_ready_queue(main_thread)) {
+                remove_from_ready_queue(main_thread);
+            }
+            remove_thread_from_wait_queues(main_thread);
+
+            // Perform context switch
+            thread_switch(current, main_thread);
+
+            spl(sr);
+            return 0;
+        }
         default:
             TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid mode %d", mode);
             return EINVAL;
@@ -433,7 +481,7 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
             
         case THREAD_SYNC_RWLOCK_UNLOCK:
             return thread_rwlock_unlock(arg1);
-
+        
         default:
             TRACE_THREAD("THREAD_SYNC_UNKNOWN: %d", operator);
             return EINVAL;

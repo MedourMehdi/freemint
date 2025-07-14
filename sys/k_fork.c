@@ -111,10 +111,36 @@ fork_proc1 (struct proc *p1, long flags, long *err)
 	p2->q_next = NULL;
 	p2->wait_q = 0;
 
-	/* Initialize thread-related fields */
+/* Initialize thread-related fields */
 	p2->current_thread = NULL;
 	p2->threads = NULL;
 	p2->num_threads = 0;
+	p2->total_threads = 0;
+
+	/* Initialize thread scheduling parameters - inherit from parent */
+	p2->thread_preempt_interval = p1->thread_preempt_interval;
+	p2->thread_default_timeslice = p1->thread_default_timeslice;
+	p2->thread_min_timeslice = p1->thread_min_timeslice;
+	p2->thread_rr_timeslice = p1->thread_rr_timeslice;
+
+	/* Initialize thread queues */
+	p2->sleep_queue = NULL;
+	p2->ready_queue = NULL;
+	p2->signal_wait_queue = NULL;
+	p2->idle_thread = NULL;
+
+	/* Thread timer initialization */
+	p2->p_thread_timer.thread_id = 0;
+	p2->p_thread_timer.enabled = 0;
+	p2->p_thread_timer.timeout = NULL;
+	p2->p_thread_timer.sr = 0;
+	p2->p_thread_timer.in_handler = 0;
+
+	/* Thread-specific data management */
+	p2->thread_keys = NULL;
+	p2->next_key = 0;
+	p2->proc_tsd_data = NULL;
+	p2->thread_signals_enabled = p1->thread_signals_enabled;
 
 	/* Duplicate command line */
 # ifndef M68000

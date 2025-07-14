@@ -113,7 +113,7 @@ struct thread {
     /* Scheduling and timing */
     unsigned long wakeup_time;      /* Wakeup time in ticks */
     unsigned long last_scheduled;   /* Last time this thread was scheduled (in ticks) */
-    
+
     /* Thread join fields */
     void *retval;                /* Return value from proc_thread_exit */
     struct thread *joiner;       /* Thread that is joining this thread */
@@ -149,10 +149,15 @@ struct thread_join {
     int joined;                /* Flag indicating join completed */
 };
 
+#ifndef THREAD_CTRL_SWITCH_TO_MAIN
+#define THREAD_CTRL_SWITCH_TO_MAIN  15
+#endif
+
 long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2);
 long _cdecl sys_p_thread_signal(long func, long arg1, long arg2);
 long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2);
 long _cdecl sys_p_thread_sched_policy(long func, long arg1, long arg2, long arg3);
+long _cdecl sys_p_thread_atomic(long operation, long ptr, long arg1, long arg2);
 
 long _cdecl proc_thread_create(void *(*func)(void*), void *arg, void *stack);
 void proc_thread_cleanup_process(struct proc *pcurproc); /** Called in terminate function - k_exit.c */

@@ -49,6 +49,9 @@
 #define PROC_THREADS_SCHEDULER_H
 
 void thread_preempt_handler(PROC *p, long arg);
+
+void thread_switch(struct thread *from, struct thread *to);
+
 void proc_thread_schedule(void);
 void proc_thread_exit(void *retval, void *arg);
 

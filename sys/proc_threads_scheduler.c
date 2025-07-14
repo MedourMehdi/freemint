@@ -35,7 +35,7 @@ void thread_switch_timeout_handler(PROC *p, long arg);
 
 /* Thread scheduling helper functions */
 static int should_schedule_thread(struct thread *current, struct thread *next);
-static void thread_switch(struct thread *from, struct thread *to);
+// static void thread_switch(struct thread *from, struct thread *to);
 
 /* Thread exit helper functions */
 static void cancel_thread_timeouts(struct proc *p, struct thread *t);
@@ -156,7 +156,7 @@ void thread_preempt_handler(PROC *p, long arg) {
                 remove_from_ready_queue(next);
                 atomic_thread_state_change(next, THREAD_STATE_RUNNING);
                 p->current_thread = next;
-                next->last_scheduled = get_system_ticks();
+                // next->last_scheduled = get_system_ticks();
                 
                 // Rearm timer before switch
                 reschedule_preemption_timer(p, (long)next);
@@ -188,7 +188,7 @@ void thread_preempt_handler(PROC *p, long arg) {
         remove_from_ready_queue(next);
         atomic_thread_state_change(next, THREAD_STATE_RUNNING);
         p->current_thread = next;
-        next->last_scheduled = get_system_ticks();
+        // next->last_scheduled = get_system_ticks();
         
         // Rearm timer before switch
         reschedule_preemption_timer(p, (long)next);
@@ -716,7 +716,7 @@ static int should_schedule_thread(struct thread *current, struct thread *next) {
     return 0;
 }
 
-static void thread_switch(struct thread *from, struct thread *to) {
+void thread_switch(struct thread *from, struct thread *to) {
     struct thread_switch_context ctx = {0};
     
     // Fast validation first
@@ -727,6 +727,8 @@ static void thread_switch(struct thread *from, struct thread *to) {
     
     // Special case: if from is NULL, just switch to the destination thread
     if (!from) {
+        to->last_scheduled = get_system_ticks();
+        
         TRACE_THREAD("SWITCH: Switching to thread %d (no source thread)", to->tid);
         register unsigned short sr = splhigh();
         change_context(get_thread_context(to));
@@ -804,6 +806,7 @@ static void prepare_thread_switch(struct thread_switch_context *ctx) {
 
 /* Add this new function to execute thread switch in minimal critical section */
 static void execute_thread_switch(struct thread_switch_context *ctx) {
+    unsigned long now;
     // Check if another switch is in progress
     if (thread_switch_in_progress) {
         TRACE_THREAD("SWITCH: Another switch in progress, aborting");
@@ -831,7 +834,23 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
         TRACE_THREAD("SWITCH: Keeping priority boost for thread %d",
                     ctx->from->tid);
     }
-    
+    // Update CPU time for outgoing thread
+    now = get_system_ticks();
+
+    if (ctx->from->last_scheduled == 0) {
+        /*
+         * First time this thread is switched out - it was never properly scheduled.
+         * This happens for initial threads. Set last_scheduled to now to prevent
+         * accounting the entire uptime, but don't add to CPU time.
+         */
+        ctx->from->last_scheduled = now;
+        TRACE_THREAD("SWITCH: Initializing last_scheduled for thread %d", ctx->from->tid);
+    }
+
+    // Set new schedule time for incoming thread
+    ctx->to->last_scheduled = now;
+    TRACE_THREAD("SWITCH: Thread %d scheduled at %lu", ctx->to->tid, now);
+
     /* Check for pending signals in the thread we're switching to */
     if (ctx->to->proc->p_sigacts && ctx->to->proc->p_sigacts->thread_signals) {
         /* Skip thread0 - it handles process signals */
@@ -993,7 +1012,7 @@ static void execute_scheduling_decision(struct proc *p, struct scheduling_decisi
     p->current_thread = decision->next_thread;
     
     // Record scheduling time for timeslice accounting
-    decision->next_thread->last_scheduled = get_system_ticks();
+    // decision->next_thread->last_scheduled = get_system_ticks();
     
     // Use the original thread_switch function for now
     // This ensures compatibility until optimized_thread_switch is fully tested

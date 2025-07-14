@@ -97,6 +97,7 @@
 
 #define THREAD_CTRL_IS_INITIAL        13  /* Check if current thread is initial */
 #define THREAD_CTRL_IS_MULTITHREADED  14  /* Check if process is multithreaded */
+#define THREAD_CTRL_SWITCH_TO_MAIN  15  /* Switch to main thread context */
 
 /* Wait types as bitfields */
 #define WAIT_NONE       0x0000  /* Not waiting */
@@ -148,13 +149,13 @@
 #define THREAD_TSD_SET_SPECIFIC  24   /* Set thread-specific data */
 
 /* Reader-writer lock operations */
-#define THREAD_SYNC_RWLOCK_INIT      25
-#define THREAD_SYNC_RWLOCK_DESTROY   26
-#define THREAD_SYNC_RWLOCK_RDLOCK    27
-#define THREAD_SYNC_RWLOCK_WRLOCK    28
-#define THREAD_SYNC_RWLOCK_UNLOCK    29
-#define THREAD_SYNC_RWLOCK_TRYRDLOCK 30
-#define THREAD_SYNC_RWLOCK_TRYWRLOCK 31
+#define THREAD_SYNC_RWLOCK_INIT			25
+#define THREAD_SYNC_RWLOCK_DESTROY		26
+#define THREAD_SYNC_RWLOCK_RDLOCK		27
+#define THREAD_SYNC_RWLOCK_WRLOCK		28
+#define THREAD_SYNC_RWLOCK_UNLOCK		29
+#define THREAD_SYNC_RWLOCK_TRYRDLOCK	30
+#define THREAD_SYNC_RWLOCK_TRYWRLOCK	31
 
 /* Thread cancellation constants */
 #define PTHREAD_CANCEL_ENABLE       0   /* Enable cancellation */

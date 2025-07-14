@@ -190,6 +190,11 @@ sendsig(ushort sig)
 		sigact->sa_flags &= ~SA_RESETHAND;
 	}
 	
+	/* Switch to main thread for multi-threaded processes */
+	if (curproc->num_threads > 1 && curproc->current_thread && curproc->current_thread->tid != 0) {
+		sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
+	}
+
 	if (save_context(&newcurrent) == 0)
 	{
 		/* go do the signal; eventually, we'll restore this

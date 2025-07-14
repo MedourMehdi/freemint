@@ -17,9 +17,15 @@
 #define PROC_THREADS_SYNC_H
 
 struct semaphore {
+    /* Non threaded values */
+    volatile unsigned short max_count;
+    volatile unsigned short io_count;
+    char *sem_id;
+    /* pthread used values */
     volatile unsigned short count;
     struct thread *wait_queue;
 };
+
 
 struct mutex {
     volatile short locked;

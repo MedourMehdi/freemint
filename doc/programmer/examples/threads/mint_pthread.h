@@ -137,7 +137,6 @@ typedef long pthread_t;
 #define PTHREAD_CANCELED           ((void *)-1)  /* Return value for canceled threads */
 
 #define PTHREAD_BARRIER_SERIAL_THREAD 1
-#define CLOCK_THREAD_CPUTIME_ID 1
 
 #define CONDVAR_MAGIC 0xC0DEC0DE
 
@@ -173,6 +172,11 @@ struct condvar {
 };
 
 struct semaphore {
+    /* Non threaded values */
+    short max_count;
+    short io_count;
+    char *sem_id;
+    /* pthread used values */
     volatile unsigned short count;
     struct thread *wait_queue;
 };
@@ -1364,18 +1368,6 @@ static inline char *mint_strtok_r(char *str, const char *delim, char **saveptr)
 static inline int msleep(long ms)
 {
     return pthread_sleep_ms(ms);
-}
-
-/**
- * Get the current thread's CPU time
- */
-static inline int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id)
-{
-    if (!clock_id)
-        return EINVAL;
-    
-    *clock_id = CLOCK_THREAD_CPUTIME_ID;
-    return 0;
 }
 
 /* Optimized mutex implementation for single-CPU systems */

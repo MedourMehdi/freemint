@@ -374,7 +374,7 @@ void update_thread_timeslice(struct thread *t)
     }
     
     // Update last scheduled time
-    t->last_scheduled = get_system_ticks();
+    // t->last_scheduled = get_system_ticks();
 }
 
 // Function to set thread scheduling policy
