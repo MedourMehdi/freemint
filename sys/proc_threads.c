@@ -338,9 +338,13 @@ static void init_main_thread_context(struct proc *p) {
     t0->stack_top = (char*)p->stack + STKSIZE;
     t0->stack_magic = STACK_MAGIC;
     
-    // Copy process context to thread context
-    memcpy(&t0->ctxt[CURRENT], &p->ctxt[CURRENT], sizeof(CONTEXT));
-    memcpy(&t0->ctxt[SYSCALL], &p->ctxt[SYSCALL], sizeof(CONTEXT));
+    // // Copy process context to thread context
+    // memcpy(&t0->ctxt[CURRENT], &p->ctxt[CURRENT], sizeof(CONTEXT));
+    // memcpy(&t0->ctxt[SYSCALL], &p->ctxt[SYSCALL], sizeof(CONTEXT));
+
+    /* Point to process context instead of copying */
+    t0->ctxt[CURRENT] = p->ctxt[CURRENT];
+    t0->ctxt[SYSCALL] = p->ctxt[SYSCALL];
     
     // Link into process
     t0->next = NULL;
