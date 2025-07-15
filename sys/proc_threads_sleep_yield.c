@@ -314,8 +314,10 @@ long proc_thread_yield(void) {
     struct proc *p = curproc;
     struct thread *t;
     
-    if (!p || !p->current_thread)
-        return EINVAL;
+    if (!p || !p->current_thread){
+        yield();
+        return 0;
+    }
         
     t = p->current_thread;
     

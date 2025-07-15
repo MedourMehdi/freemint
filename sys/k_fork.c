@@ -57,6 +57,11 @@ fork_proc1 (struct proc *p1, long flags, long *err)
 {
 	struct proc *p2;
 
+	if(p1->current_thread && p1->current_thread->tid != 0){
+		if(err) *err = ENOSYS;
+		return NULL;
+	}
+
 	p2 = kmalloc (sizeof (*p2));
 	if (!p2) goto nomem;
 

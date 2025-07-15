@@ -171,4 +171,5 @@ long proc_thread_status(long tid);
 CONTEXT* get_thread_context(struct thread *t);
 struct thread* get_idle_thread(struct proc *p);
 struct thread* get_main_thread(struct proc *p);
+
 #endif /* PROC_THREAD_H */

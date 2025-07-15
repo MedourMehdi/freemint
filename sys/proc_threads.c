@@ -345,7 +345,7 @@ static void init_main_thread_context(struct proc *p) {
     /* Point to process context instead of copying */
     t0->ctxt[CURRENT] = p->ctxt[CURRENT];
     t0->ctxt[SYSCALL] = p->ctxt[SYSCALL];
-    
+
     // Link into process
     t0->next = NULL;
 

@@ -659,7 +659,7 @@ sleep(int _que, long cond)
 	spl(sr);
 
 	/* Switch to main thread for multi-threaded processes */
-	if (curproc->num_threads > 1 && curproc->current_thread && curproc->current_thread->tid != 0) {
+	if (curproc->current_thread && curproc->current_thread->tid != 0) {
 		/* Ignore errors from sys_p_thread_ctrl, as failures (EINVAL, ESRCH) are not critical here */
 		(void)sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
 	}

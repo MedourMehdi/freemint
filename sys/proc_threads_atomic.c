@@ -171,9 +171,6 @@ long _cdecl sys_p_thread_atomic(long operation, long ptr, long arg1, long arg2) 
         return EINVAL;
     }
     
-    TRACE_THREAD("sys_p_thread_atomic: op=%ld, ptr=%p, arg1=%ld, arg2=%ld", 
-                operation, target, arg1, arg2);
-    
     switch (operation) {
         case THREAD_ATOMIC_INCREMENT:
             return atomic_increment(target);

@@ -144,6 +144,7 @@ static void handler_execute(int sig, void *arg)
 {
     struct thread *t = CURTHREAD;
     struct proc *p = curproc;
+    TIMEOUT *cleanup_signal_timeout = NULL;
     
     if (!t || !p || !p->p_sigacts || sig <= 0 || sig >= NSIG)
         return;
@@ -165,8 +166,8 @@ static void handler_execute(int sig, void *arg)
     t->t_sig_in_progress = 0;
     
     /* Schedule cleanup of signal stack */
-    addtimeout(p, 1, cleanup_signal_stack);
-    addtimeout(p, 1, cleanup_signal_stack)->arg = (long)t;
+    cleanup_signal_timeout = addtimeout(p, 1, cleanup_signal_stack);
+    cleanup_signal_timeout->arg = (long)t;
 }
 
 /*
