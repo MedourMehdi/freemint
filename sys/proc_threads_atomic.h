@@ -27,33 +27,9 @@
 #define THREAD_ATOMIC_AND           8   /* Atomic bitwise AND */
 #define THREAD_ATOMIC_XOR           9   /* Atomic bitwise XOR */
 
-/* Kernel-internal atomic operations */
-int thread_atomic_increment(volatile int *value);
-int thread_atomic_decrement(volatile int *value);
-int thread_atomic_cas(volatile int *ptr, int oldval, int newval);
-int thread_atomic_exchange(volatile int *ptr, int newval);
-
-/* Reference counting operations */
-void thread_refcount_inc(volatile int *refcount);
-int thread_refcount_dec(volatile int *refcount);
-
-/* Flag operations */
-int thread_atomic_test_and_set(volatile int *flag);
-void thread_atomic_clear(volatile int *flag);
-
-// /* Thread state management */
-// void atomic_thread_state_change(struct thread *t, int new_state);
-
 /* Thread-safe linked list operations */
 int thread_atomic_list_add(struct thread **head, struct thread *new_thread);
 int thread_atomic_list_remove(struct thread **head, struct thread *thread_to_remove);
-
-/* Macros for common atomic operations */
-#define ATOMIC_INC(var) thread_atomic_increment(&(var))
-#define ATOMIC_DEC(var) thread_atomic_decrement(&(var))
-#define ATOMIC_CAS(ptr, old, new) thread_atomic_cas(&(ptr), (old), (new))
-#define ATOMIC_SET(var, val) thread_atomic_exchange(&(var), (val))
-#define ATOMIC_GET(var) (*(volatile int*)&(var))
 
 /* Memory barriers for 68k */
 #ifdef __mcoldfire__
@@ -68,62 +44,16 @@ typedef struct {
     int owner_tid;  /* For debugging */
 } spinlock_t;
 
-static inline void spinlock_init(spinlock_t *lock) {
-    lock->locked = 0;
-    lock->owner_tid = -1;
-}
-
-static inline void spinlock_lock(spinlock_t *lock) {
-    struct thread *t = CURTHREAD;
-    int tid = t ? t->tid : -1;
-    
-    while (thread_atomic_test_and_set(&lock->locked)) {
-        /* Spin - could add yield here for better performance */
-        asm volatile("nop");
-    }
-    
-    lock->owner_tid = tid;
-    MEMORY_BARRIER();
-}
-
-static inline int spinlock_trylock(spinlock_t *lock) {
-    struct thread *t = CURTHREAD;
-    int tid = t ? t->tid : -1;
-    
-    if (thread_atomic_test_and_set(&lock->locked) == 0) {
-        lock->owner_tid = tid;
-        MEMORY_BARRIER();
-        return 1;  /* Success */
-    }
-    return 0;  /* Failed */
-}
-
-static inline void spinlock_unlock(spinlock_t *lock) {
-    MEMORY_BARRIER();
-    lock->owner_tid = -1;
-    thread_atomic_clear(&lock->locked);
-}
+inline void spinlock_init(spinlock_t *lock);
+inline void spinlock_lock(spinlock_t *lock);
+inline void spinlock_unlock(spinlock_t *lock);
+inline int spinlock_trylock(spinlock_t *lock);
 
 /* Atomic counter for generating unique IDs */
 typedef struct {
     volatile int counter;
 } atomic_counter_t;
 
-static inline void atomic_counter_init(atomic_counter_t *counter, int initial_value) {
-    counter->counter = initial_value;
-}
-
-static inline int atomic_counter_inc(atomic_counter_t *counter) {
-    return thread_atomic_increment(&counter->counter);
-}
-
-static inline int atomic_counter_dec(atomic_counter_t *counter) {
-    return thread_atomic_decrement(&counter->counter);
-}
-
-static inline int atomic_counter_get(atomic_counter_t *counter) {
-    return ATOMIC_GET(counter->counter);
-}
 
 /* Wait-free queue operations for single producer/consumer */
 typedef struct queue_node {
@@ -137,10 +67,40 @@ typedef struct {
     spinlock_t lock;  /* For multi-producer/consumer scenarios */
 } atomic_queue_t;
 
-/* Function declarations for atomic queue operations */
-void atomic_queue_init(atomic_queue_t *queue);
-int atomic_queue_enqueue(atomic_queue_t *queue, void *data);
-void* atomic_queue_dequeue(atomic_queue_t *queue);
-int atomic_queue_is_empty(atomic_queue_t *queue);
+/* Atomic counter operations */
+inline void atomic_counter_init(atomic_counter_t *counter, int initial_value);
+inline int atomic_counter_inc(atomic_counter_t *counter);
+inline int atomic_counter_dec(atomic_counter_t *counter);
+inline int atomic_counter_get(atomic_counter_t *counter);
+/* Atomic operations */
+inline int atomic_xor(volatile int *ptr, int value);
+inline int atomic_and(volatile int *ptr, int value);
+inline int atomic_or(volatile int *ptr, int value);
+inline int atomic_sub(volatile int *ptr, int value);
+inline int atomic_add(volatile int *ptr, int value);
+inline int atomic_exchange(volatile int *ptr, int newval);
+inline int atomic_cas(volatile int *ptr, int oldval, int newval);
+inline int atomic_decrement(volatile int *value);
+inline int atomic_increment(volatile int *value);
+
+/* Convenience functions for internal kernel use */
+/* Kernel-internal atomic operations */
+#define thread_atomic_increment(x) atomic_increment(x)
+#define thread_atomic_decrement(x) atomic_decrement(x)
+#define thread_atomic_cas(x, y, z) atomic_cas(x, y, z)
+#define thread_atomic_exchange(x, y) atomic_exchange(x, y)
+/* Reference counting operations */
+#define thread_refcount_inc(x) atomic_increment(x)
+#define thread_refcount_dec(x) atomic_decrement(x)
+/* Flag operations */
+#define thread_atomic_test_and_set(x)   atomic_exchange(x, 1)
+#define thread_atomic_clear(x)          atomic_exchange(x, 0)
+
+/* Macros for common atomic operations */
+#define ATOMIC_INC(var) thread_atomic_increment(&(var))
+#define ATOMIC_DEC(var) thread_atomic_decrement(&(var))
+#define ATOMIC_CAS(ptr, old, new) thread_atomic_cas(&(ptr), (old), (new))
+#define ATOMIC_SET(var, val) thread_atomic_exchange(&(var), (val))
+#define ATOMIC_GET(var) (*(volatile int*)&(var))
 
 #endif /* PROC_THREADS_ATOMIC_H */

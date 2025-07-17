@@ -513,3 +513,53 @@ long _cdecl sys_p_thread_sched_policy(long func, long arg1, long arg2, long arg3
             return EINVAL;
     }
 }
+
+/**
+ * Atomic operations system call dispatcher
+ * 
+ * @param operation - The atomic operation to perform
+ * @param ptr - Pointer to the value to operate on
+ * @param arg1 - First argument (value for most operations, oldval for CAS)
+ * @param arg2 - Second argument (newval for CAS, unused for others)
+ * @return Result of the atomic operation
+ */
+long _cdecl sys_p_thread_atomic(long operation, long ptr, long arg1, long arg2) {
+    volatile int *target = (volatile int *)ptr;
+    
+    /* Validate pointer */
+    if (!target) {
+        return EINVAL;
+    }
+    
+    switch (operation) {
+        case THREAD_ATOMIC_INCREMENT:
+            return atomic_increment(target);
+            
+        case THREAD_ATOMIC_DECREMENT:
+            return atomic_decrement(target);
+            
+        case THREAD_ATOMIC_CAS:
+            return atomic_cas(target, (int)arg1, (int)arg2);
+            
+        case THREAD_ATOMIC_EXCHANGE:
+            return atomic_exchange(target, (int)arg1);
+            
+        case THREAD_ATOMIC_ADD:
+            return atomic_add(target, (int)arg1);
+            
+        case THREAD_ATOMIC_SUB:
+            return atomic_sub(target, (int)arg1);
+            
+        case THREAD_ATOMIC_OR:
+            return atomic_or(target, (int)arg1);
+            
+        case THREAD_ATOMIC_AND:
+            return atomic_and(target, (int)arg1);
+            
+        case THREAD_ATOMIC_XOR:
+            return atomic_xor(target, (int)arg1);
+            
+        default:
+            return EINVAL;
+    }
+}
