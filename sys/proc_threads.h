@@ -53,6 +53,7 @@
 #define MS_PER_TICK 5 // 200Hz = 5ms/tick
 #define MAX_SWITCH_RETRIES 3
 
+#define MAX_POSIX_THREAD_PRIORITY 99 /* POSIX thread priority range */
 #define MAX_THREAD_PRIORITY 16 /* Maximum thread priority (scaled from POSIX 0-99 range) */
 /* 
  * Thread priority scaling:
@@ -156,6 +157,18 @@
 #define THREAD_SYNC_RWLOCK_UNLOCK		29
 #define THREAD_SYNC_RWLOCK_TRYRDLOCK	30
 #define THREAD_SYNC_RWLOCK_TRYWRLOCK	31
+
+#define THREAD_SYNC_MUTEX_ATTR_INIT		32
+#define THREAD_SYNC_MUTEX_ATTR_DESTROY	33
+#define THREAD_SYNC_MUTEX_DESTROY		34
+#define THREAD_SYNC_MUTEX_TRYLOCK		35
+
+#define THREAD_SYNC_MUTEXATTR_SETTYPE      36
+#define THREAD_SYNC_MUTEXATTR_SETPROTOCOL  37
+#define THREAD_SYNC_MUTEXATTR_SETPRIOCEILING 38
+#define THREAD_SYNC_MUTEXATTR_GETTYPE      39
+#define THREAD_SYNC_MUTEXATTR_GETPROTOCOL  40
+#define THREAD_SYNC_MUTEXATTR_GETPRIOCEILING 41
 
 /* Thread cancellation constants */
 #define PTHREAD_CANCEL_ENABLE       0   /* Enable cancellation */

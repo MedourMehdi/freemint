@@ -361,223 +361,6 @@ int thread_semaphore_init(struct semaphore *sem, short count) {
     return THREAD_SUCCESS;
 }
 
-// Function to initialize a mutex
-int thread_mutex_init(struct mutex *mutex) {
-    if (!mutex) {
-        return EINVAL;
-    }
-    
-    mutex->locked = 0;
-    // mutex->fast_lock = 0;
-    mutex->owner = NULL;
-    mutex->wait_queue = NULL;
-    return THREAD_SUCCESS;
-}
-
-// Improved mutex implementation for uniprocessor
-int thread_mutex_lock(struct mutex *mutex) {
-    if (!mutex) {
-        return EINVAL;
-    }
-
-    struct thread *t = CURTHREAD;
-    if (!t) {
-        return EINVAL;
-    }
-
-    // Prevent nested blocking
-    if (t->wait_type != WAIT_NONE) {
-        TRACE_THREAD("MUTEX LOCK: Thread %d already blocked", t->tid);
-        return EDEADLK;
-    }
-
-    register unsigned short sr = splhigh();
-    
-    // Try quick acquisition
-    if (mutex->locked == 0) {
-        TRACE_THREAD("THREAD_MUTEX_LOCK: Fast lock");
-        mutex->locked = 1;
-        mutex->owner = t;
-        spl(sr);
-        return THREAD_SUCCESS;
-    }
-    
-    // Check for deadlock (thread trying to lock mutex it already owns)
-    if (mutex->owner == t) {
-        spl(sr);
-        return EDEADLK;
-    }
-    
-    TRACE_THREAD_MUTEX("locking", t, mutex);
-    
-    // Add to wait queue with priority
-    t->wait_type |= WAIT_MUTEX;
-    t->mutex_wait_obj = mutex;
-    
-    // Insert in priority order (higher priority first)
-    struct thread **pp = &mutex->wait_queue;
-    while (*pp && (*pp)->priority > t->priority) {
-        pp = &(*pp)->next_wait;
-    }
-    t->next_wait = *pp;
-    *pp = t;
-    
-    TRACE_THREAD("THREAD_MUTEX_LOCK: Block thread %d", t->tid);
-    atomic_thread_state_change(t, THREAD_STATE_BLOCKED);
-    
-    // Priority inheritance - boost the priority of the mutex owner
-    if (mutex->owner && mutex->owner->priority < t->priority) {
-        TRACE_THREAD("PRI-INHERIT: Thread %d (pri %d) -> owner %d (pri %d)",
-                    t->tid, t->priority,
-                    mutex->owner->tid, mutex->owner->priority);
-        
-        // Boost owner's priority to the waiting thread's priority
-        boost_thread_priority(mutex->owner, t->priority - mutex->owner->priority);
-        
-        // Reinsert owner in ready queue if needed
-        if (mutex->owner->state == THREAD_STATE_READY) {
-            remove_from_ready_queue(mutex->owner);
-            add_to_ready_queue(mutex->owner);
-        }
-    }
-    
-    spl(sr);
-    
-    // Yield CPU - will resume here when woken
-    proc_thread_schedule();
-    
-    // When we resume, check if we were sleeping
-    sr = splhigh();
-    if (t->wakeup_time > 0) {
-        TRACE_THREAD("THREAD_MUTEX_LOCK: Thread %d was sleeping, clearing sleep state", t->tid);
-        t->wakeup_time = 0;
-        remove_from_sleep_queue(t->proc, t);
-    }
-    
-    // When we resume, we should own the lock
-    // Double-check that we actually own the lock now
-    if (mutex->owner != t) {
-        TRACE_THREAD("THREAD_MUTEX_LOCK: Thread %d woke up but doesn't own mutex!", t->tid);
-        mutex->owner = t;  // Force ownership
-        mutex->locked = 1;
-    }
-    
-    spl(sr);
-    return THREAD_SUCCESS;
-}
-
-int thread_mutex_unlock(struct mutex *mutex) {
-    if (!mutex) {
-        return EINVAL;
-    }
-    
-    struct thread *current = CURTHREAD;
-    if (!current) {
-        return EINVAL;
-    }
-    
-    register unsigned short sr = splhigh();
-    
-    // Check if current thread owns the mutex
-    if (mutex->owner != current) {
-        TRACE_THREAD("THREAD_MUTEX_UNLOCK: Thread %d is not the owner (owner=%p)", 
-                    current->tid, mutex->owner ? mutex->owner->tid : -1);
-        spl(sr);
-        return EINVAL; // Not owner
-    }
-    
-    // If there are waiters, wake the highest priority one
-    if (mutex->wait_queue) {
-        struct thread *prev_highest = NULL;
-        struct thread *highest = find_highest_priority_thread_in_queue(mutex->wait_queue, &prev_highest);
-        
-        if (highest) {
-            // Remove from wait queue
-            if (prev_highest) {
-                prev_highest->next_wait = highest->next_wait;
-            } else {
-                mutex->wait_queue = highest->next_wait;
-            }
-            highest->next_wait = NULL;
-            
-            TRACE_THREAD("THREAD_MUTEX_UNLOCK: Waking thread %d (priority %d)", 
-                        highest->tid, highest->priority);
-            
-            // Transfer lock ownership
-            mutex->owner = highest;
-            
-            // Clear wait state
-            highest->wait_type &= ~WAIT_MUTEX;
-            highest->mutex_wait_obj = NULL;
-            
-            // Remove from sleep queue if needed
-            if (highest->wakeup_time > 0) {
-                remove_from_sleep_queue(highest->proc, highest);
-                highest->wakeup_time = 0;
-            }
-            
-            // Mark as ready and add to ready queue
-            atomic_thread_state_change(highest, THREAD_STATE_READY);
-            add_to_ready_queue(highest);
-            
-            // Restore original priority if boosted
-            reset_thread_priority(current);
-            
-            // Force immediate scheduling if higher priority
-            if (highest->priority > current->priority) {
-                TRACE_THREAD("THREAD_MUTEX_UNLOCK: Forcing immediate schedule due to priority");
-                spl(sr);
-                proc_thread_schedule();
-                return THREAD_SUCCESS;
-            }
-        } else {
-            // No valid waiters, release the mutex
-            TRACE_THREAD("THREAD_MUTEX_UNLOCK: No valid waiters, releasing mutex");
-            mutex->locked = 0;
-            mutex->owner = NULL;
-            
-            // Restore original priority if boosted
-            reset_thread_priority(current);
-        }
-    } else {
-        // No waiters, release the mutex
-        TRACE_THREAD_MUTEX("unlocking", current, mutex);
-        mutex->locked = 0;
-        mutex->owner = NULL;
-        
-        // Restore original priority if boosted
-        reset_thread_priority(current);
-    }
-    
-    spl(sr);
-    return THREAD_SUCCESS;
-}
-
-/**
- * Destroy a mutex
- */
-int thread_mutex_destroy(struct mutex *mutex) {
-    if (!mutex) {
-        return EINVAL;
-    }
-
-    register unsigned short sr = splhigh();
-
-    // Check if mutex is locked or has waiters
-    if (mutex->locked || mutex->wait_queue) {
-        TRACE_THREAD("MUTEX DESTROY: mutex=%p is locked or has waiters", mutex);
-        spl(sr);
-        return EBUSY;
-    }
-
-    // Reset mutex state
-    mutex->locked = 0;
-    mutex->owner = NULL;
-
-    spl(sr);
-    return THREAD_SUCCESS;
-}
-
 // Semaphore implementation
 int thread_semaphore_down(struct semaphore *sem) {
     if (!sem) {
@@ -723,7 +506,7 @@ int proc_thread_condvar_init(struct condvar *cond) {
     cond->magic = CONDVAR_MAGIC;
     cond->destroyed = 0;
     cond->timeout_ms = 0;
-    
+
     TRACE_THREAD("CONDVAR INIT: condvar=%p", cond);
     return THREAD_SUCCESS;
 }
@@ -747,7 +530,7 @@ int proc_thread_condvar_destroy(struct condvar *cond) {
     
     cond->magic = 0;
     cond->destroyed = 1;
-    
+
     spl(sr);
     TRACE_THREAD("CONDVAR DESTROY: condvar=%p destroyed", cond);
     return THREAD_SUCCESS;
@@ -847,7 +630,7 @@ int proc_thread_condvar_signal(struct condvar *cond) {
     if (!cond || cond->magic != CONDVAR_MAGIC) {
         return EINVAL;
     }
-    
+
     register unsigned short sr = splhigh();
     
     // Find highest priority waiting thread (like semaphore_up does)
@@ -1220,7 +1003,7 @@ long thread_rwlock_init(void) {
     if (!rw) 
         return -ENOMEM;
     
-    int result = thread_mutex_init(&rw->lock);
+    int result = thread_mutex_init(&rw->lock, NULL);
     if (result != THREAD_SUCCESS) {
         kfree(rw);
         return -result;

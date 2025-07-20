@@ -379,15 +379,119 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
         case THREAD_SYNC_MUTEX_LOCK:
             TRACE_THREAD("THREAD_SYNC_MUTEX_LOCK");
             return thread_mutex_lock((struct mutex *)arg1);
-            
+
+        case THREAD_SYNC_MUTEX_TRYLOCK:
+            TRACE_THREAD("THREAD_SYNC_MUTEX_TRYLOCK");
+            return thread_mutex_trylock((struct mutex *)arg1);
+
         case THREAD_SYNC_MUTEX_UNLOCK:
             TRACE_THREAD("THREAD_SYNC_MUTEX_UNLOCK");
             return thread_mutex_unlock((struct mutex *)arg1);
             
         case THREAD_SYNC_MUTEX_INIT:
             TRACE_THREAD("THREAD_SYNC_MUTEX_INIT");
-            return thread_mutex_init((struct mutex *)arg1);
+            return thread_mutex_init((struct mutex *)arg1, (const struct mutex_attr *)arg2);
+
+            // Mutex attribute functions
+        case THREAD_SYNC_MUTEX_DESTROY:
+            TRACE_THREAD("THREAD_SYNC_MUTEX_DESTROY");
+            return thread_mutex_destroy((struct mutex *)arg1);
+
+        case THREAD_SYNC_MUTEX_ATTR_INIT:
+            TRACE_THREAD("THREAD_SYNC_MUTEXATTR_INIT");
+            return thread_mutexattr_init((struct mutex_attr *)arg1);
+
+        case THREAD_SYNC_MUTEX_ATTR_DESTROY:
+            TRACE_THREAD("THREAD_SYNC_MUTEXATTR_DESTROY");
+            return thread_mutexattr_destroy((struct mutex_attr *)arg1);
             
+        case THREAD_SYNC_MUTEXATTR_SETTYPE:
+            {
+                struct mutex_attr *attr = (struct mutex_attr *)arg1;
+                int type = (int)arg2;
+
+                if (!attr) {
+                    TRACE_THREAD("SETTYPE: attr is NULL");
+                    return EINVAL;
+                }
+                
+                if (type < PTHREAD_MUTEX_NORMAL || type > PTHREAD_MUTEX_ERRORCHECK) {
+                    TRACE_THREAD("SETTYPE: invalid type %d", type);
+                    return EINVAL;
+                }
+                
+                TRACE_THREAD("SETTYPE: attr=%p, setting type to %d", attr, type);
+                
+                attr->type = type;
+                
+                TRACE_THREAD("SETTYPE: attr->type is now %d", attr->type);
+                
+                return THREAD_SUCCESS;
+            }
+
+        case THREAD_SYNC_MUTEXATTR_SETPROTOCOL:
+            {
+                struct mutex_attr *attr = (struct mutex_attr *)arg1;
+                int protocol = (int)arg2;
+
+                if (!attr) 
+                    return EINVAL;
+
+                if (protocol < PTHREAD_PRIO_NONE || protocol > PTHREAD_PRIO_PROTECT)
+                    return EINVAL;
+                TRACE_THREAD("THREAD_SYNC_MUTEXATTR_SETPROTOCOL: attr=%p, protocol=%d", attr, protocol);
+                attr->protocol = protocol;
+                TRACE_THREAD("THREAD_SYNC_MUTEXATTR_SETPROTOCOL: attr->protocol is now %d", attr->protocol);
+                return THREAD_SUCCESS;
+            }
+            
+        case THREAD_SYNC_MUTEXATTR_SETPRIOCEILING:
+            {
+                struct mutex_attr *attr = (struct mutex_attr *)arg1;
+                int prioceiling = (int)arg2;
+                if (!attr) 
+                    return EINVAL;
+                
+                if (prioceiling < 0 || prioceiling > MAX_POSIX_THREAD_PRIORITY)
+                    return EINVAL;
+                
+                attr->prioceiling = prioceiling;
+                return THREAD_SUCCESS;
+            }
+
+        case THREAD_SYNC_MUTEXATTR_GETTYPE:
+            {
+                struct mutex_attr *user_attr = (struct mutex_attr *)arg1;
+                long *type = (long *)arg2;
+
+                if (!user_attr || !type) return EINVAL;
+                *type = user_attr->type;
+                TRACE_THREAD("THREAD_SYNC_MUTEXATTR_GETTYPE: type=%d, type addr is %p", *type, type);
+                return THREAD_SUCCESS;
+            }
+
+        case THREAD_SYNC_MUTEXATTR_GETPRIOCEILING:
+            {
+                struct mutex_attr *user_attr = (struct mutex_attr *)arg1;
+                long *prioceiling = (long *)arg2;
+
+                if (!user_attr || !prioceiling) return EINVAL;
+                *prioceiling = user_attr->prioceiling;
+                TRACE_THREAD("THREAD_SYNC_MUTEXATTR_GETPRIOCEILING: prioceiling=%d, prioceiling addr is %p", *prioceiling, prioceiling);
+                return THREAD_SUCCESS;
+            }
+
+        case THREAD_SYNC_MUTEXATTR_GETPROTOCOL:
+            {
+                struct mutex_attr *user_attr = (struct mutex_attr *)arg1;
+                long *protocol = (long *)arg2;
+
+                if (!user_attr || !protocol) return EINVAL;
+                *protocol = user_attr->protocol;
+                TRACE_THREAD("THREAD_SYNC_MUTEXATTR_GETPROTOCOL: protocol=%d, protocol addr is %p", *protocol, protocol);
+                return THREAD_SUCCESS;
+            }
+
         case THREAD_SYNC_SEM_INIT: {
             struct semaphore *sem = (struct semaphore *)arg1;
             TRACE_THREAD("THREAD_SYNC_SEM_INIT: count=%d", sem->count);
