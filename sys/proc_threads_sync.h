@@ -17,14 +17,14 @@
 #ifndef PROC_THREADS_SYNC_H
 #define PROC_THREADS_SYNC_H
 
+#define SEM_NAME_MAX    4
+
 struct semaphore {
+    volatile short count;           /* Current semaphore count */
+    struct thread *wait_queue;      /* Queue of threads waiting on this sem */
     /* Non threaded values */
-    volatile unsigned short max_count;
-    volatile unsigned short io_count;
-    char *sem_id;
-    /* pthread used values */
-    volatile unsigned short count;
-    struct thread *wait_queue;
+    volatile short io_count;        /* Reference count for named sems */
+    char sem_id[SEM_NAME_MAX + 1];  /* Fixed array instead of pointer */
 };
 
 #define CONDVAR_MAGIC 0xC0DEC0DE

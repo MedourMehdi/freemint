@@ -935,6 +935,7 @@ static int prepare_scheduling_decision(struct proc *p, struct scheduling_decisio
     
     // If no next thread found, nothing to do
     if (!decision->next_thread) {
+        TRACE_THREAD("SCHED: No threads available");
         return 0;
     }
     
@@ -956,7 +957,7 @@ static int prepare_scheduling_decision(struct proc *p, struct scheduling_decisio
     // Check if we should schedule next thread
     decision->should_switch = should_schedule_thread(decision->current_thread, 
                                                    decision->next_thread);
-    
+    TRACE_THREAD("SCHED: Should switch: %d", decision->should_switch);
     return decision->should_switch;
 }
 

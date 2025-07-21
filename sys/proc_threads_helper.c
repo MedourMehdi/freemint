@@ -155,6 +155,7 @@ struct thread *get_highest_priority_thread(struct proc *p) {
                 !(t->state & THREAD_STATE_EXITED) &&
                 (t->policy == SCHED_FIFO || t->policy == SCHED_RR) &&
                 t->priority == highest_pri) {
+                TRACE_THREAD("get_highest_priority_thread: rt_bitmap - Found thread %d with priority %d", t->tid, t->priority);
                 return t;
             }
             t = t->next_ready;
@@ -172,12 +173,13 @@ struct thread *get_highest_priority_thread(struct proc *p) {
                 !(t->state & THREAD_STATE_EXITED) &&
                 t->policy == SCHED_OTHER &&
                 t->priority == highest_pri) {
+                TRACE_THREAD("get_highest_priority_thread: normal_bitmap - Found thread %d with priority %d", t->tid, t->priority);
                 return t;
             }
             t = t->next_ready;
         }
     }
-    
+    TRACE_THREAD("get_highest_priority_thread: No threads found");
     return NULL;
 }
 
@@ -331,4 +333,43 @@ struct thread *get_thread_by_id(struct proc *p, short tid) {
     
     spl(sr);
     return NULL;
+}
+
+/* M68K TAS instruction implementation with ColdFire support */
+#ifdef __mcoldfire__
+/* ColdFire version - TAS instruction available but limited instruction set */
+inline int tas_try_lock(volatile unsigned char *lock_byte) {
+    register int result;
+    __asm__ volatile (
+        "tas %1\n\t"        /* Test and set the lock byte */
+        "seq %0\n\t"        /* Set result to 1 if lock was acquired (Z=1) */
+        "andi.l #1,%0"      /* Use andi.l instead of and.b for ColdFire */
+        : "=d" (result), "+m" (*lock_byte)
+        :
+        : "cc"
+    );
+    return result;
+}
+#else
+/* Standard m68k version */
+inline int tas_try_lock(volatile unsigned char *lock_byte) {
+    register int result;
+    __asm__ volatile (
+        "tas %1\n\t"        /* Test and set the lock byte */
+        "seq %0\n\t"        /* Set result to 1 if lock was acquired (Z=1) */
+        "and.b #1,%0"       /* Mask to ensure clean boolean result */
+        : "=d" (result), "+m" (*lock_byte)
+        :
+        : "cc"
+    );
+    return result;
+}
+#endif
+
+inline void tas_unlock(volatile unsigned char *lock_byte) {
+    *lock_byte = 0;
+}
+
+inline int tas_is_locked(volatile unsigned char *lock_byte) {
+    return (*lock_byte != 0);
 }

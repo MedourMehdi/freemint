@@ -40,4 +40,8 @@ int scale_thread_priority(int priority);
 
 struct thread *get_thread_by_id(struct proc *p, short tid);
 
+ /* TAS-based atomic operations */
+inline int tas_try_lock(volatile unsigned char *lock_byte);
+inline void tas_unlock(volatile unsigned char *lock_byte);
+inline int tas_is_locked(volatile unsigned char *lock_byte);
 #endif //PROC_THREADS_HELPER_H

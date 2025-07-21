@@ -25,10 +25,10 @@
 
 /* Mutex attribute structure */
 struct mutex_attr {
-    int type;                 /* Mutex type: NORMAL, RECURSIVE, ERRORCHECK */
-    int pshared;              /* Process-shared flag */
-    int protocol;             /* Priority protocol */
-    int prioceiling;          /* Priority ceiling value */
+    short type;                 /* Mutex type: NORMAL, RECURSIVE, ERRORCHECK */
+    short pshared;              /* Process-shared flag */
+    short protocol;             /* Priority protocol */
+    short prioceiling;          /* Priority ceiling value */
 };
 
 /* Mutex types */
@@ -44,12 +44,12 @@ struct mutex_attr {
 struct mutex {
     struct thread *owner;
     struct thread *wait_queue;    
-    int locked;
-    int protocol;              /* Priority protocol */
-    int type;                  /* Mutex type */
-    int prioceiling;           /* Priority ceiling */
-    int saved_priority;        /* Saved priority for ceiling protocol */
-    int lock_count;            /* Lock count for recursive mutexes */
+    short locked;
+    short protocol;              /* Priority protocol */
+    short type;                  /* Mutex type */
+    short prioceiling;           /* Priority ceiling */
+    short saved_priority;        /* Saved priority for ceiling protocol */
+    short lock_count;            /* Lock count for recursive mutexes */
 };
 
 int thread_mutex_trylock(struct mutex *mutex);
