@@ -153,6 +153,10 @@ struct thread_join {
 #define THREAD_CTRL_SWITCH_TO_MAIN  15
 #endif
 
+#ifndef THREAD_CTRL_SWITCH_TO_THREAD
+#define THREAD_CTRL_SWITCH_TO_THREAD	16
+#endif
+
 long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2);
 long _cdecl sys_p_thread_signal(long func, long arg1, long arg2);
 long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2);

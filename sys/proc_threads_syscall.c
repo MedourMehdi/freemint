@@ -232,6 +232,58 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
             spl(sr);
             return 0;
         }
+
+        case THREAD_CTRL_SWITCH_TO_THREAD: {
+            short target_tid = (short)arg1;
+            struct proc *p = curproc;
+            struct thread *current = p->current_thread;
+            struct thread *target = NULL;
+
+            // Find target thread
+            register unsigned short sr = splhigh();
+            for (struct thread *t = p->threads; t != NULL; t = t->next) {
+                if (t->tid == target_tid && t->magic == CTXT_MAGIC && 
+                    !(t->state & THREAD_STATE_EXITED)) {
+                    target = t;
+                    break;
+                }
+            }
+
+            if (!target) {
+                spl(sr);
+                TRACE_THREAD("SWITCH_TO_THREAD: Thread %d not found", target_tid);
+                return ESRCH;
+            }
+
+            // Validate thread state
+            if (target->state != THREAD_STATE_READY || target == current) {
+                spl(sr);
+                TRACE_THREAD("SWITCH_TO_THREAD: Thread %d not ready or is current", target_tid);
+                return EAGAIN;
+            }
+
+            // Remove from ready queue
+            remove_from_ready_queue(target);
+
+            // Update states
+            if (current->wait_type == WAIT_NONE) {
+                atomic_thread_state_change(current, THREAD_STATE_READY);
+                add_to_ready_queue(current);
+            }
+            
+            atomic_thread_state_change(target, THREAD_STATE_RUNNING);
+            p->current_thread = target;
+            target->last_scheduled = get_system_ticks();
+
+            // Perform context switch
+            TRACE_THREAD("SWITCH_TO_THREAD: Switching %d -> %d", 
+                        current->tid, target->tid);
+            thread_switch(current, target);
+            
+            spl(sr);
+            return 0;
+        }
+        
         default:
             TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid mode %d", mode);
             return EINVAL;

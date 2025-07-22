@@ -52,12 +52,34 @@ sendsig(ushort sig)
 	struct sigcontext *sigctxt;
 	CONTEXT *call, contexts[2];
 
+	/* Variables to track original thread state */
+	struct thread *original_thread = NULL;
+	void *stack_base_for_validation;
+	size_t stack_size_for_validation;
+
 # define newcurrent (contexts[0])
 # define oldsysctxt (contexts[1])
 
-
 	assert(curproc->stack_magic == STACK_MAGIC);
-	
+
+	/* Store original thread info BEFORE switching */
+	if (curproc->current_thread && curproc->current_thread->tid != 0) {
+		original_thread = curproc->current_thread;
+		/* For stack validation, we need to consider the current thread's stack */
+		stack_base_for_validation = original_thread->stack;
+		stack_size_for_validation = original_thread->stack_size;
+	} else {
+		/* Use process stack for validation */
+		stack_base_for_validation = curproc->stack;
+		stack_size_for_validation = STKSIZE;
+	}
+
+	/* Switch to main thread for multi-threaded processes */
+	if (original_thread) {
+		// save_context(&(curproc->current_thread->ctxt[CURRENT]));
+		sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
+	}
+
 	/* another kludge: there is one case in which the p_sigreturn
 	 * mechanism is invoked by the kernel, namely when the user
 	 * calls Supexec() or when s/he installs a handler for the
@@ -129,16 +151,18 @@ sendsig(ushort sig)
 	 * calls into the kernel to restore the context in prev_ctxt
 	 * (thus putting us back here). We can then continue on our way.
 	 */
-	
+
 	/* set a new system stack, with a bit of buffer space */
 	oldstack = curproc->sysstack;
 	newstack = ((unsigned long) &newcurrent) - 0x40UL - 12UL - 0x100UL;
-	if (newstack < (unsigned long) curproc->stack + ISTKSIZE + 256)
+
+	/* Use the original thread's stack for validation, even though we switched to main */
+	if (newstack < (unsigned long) stack_base_for_validation + ISTKSIZE + 256)
 	{
 		ALERT("stack overflow");
 		return 1;
 	}
-	else if ((unsigned long) curproc->stack + STKSIZE < newstack)
+	else if ((unsigned long) stack_base_for_validation + stack_size_for_validation < newstack)
 	{
 		FATAL("system stack not in proc structure");
 	}
@@ -188,11 +212,6 @@ sendsig(ushort sig)
 		
 		sigact->sa_handler = SIG_DFL;
 		sigact->sa_flags &= ~SA_RESETHAND;
-	}
-	
-	/* Switch to main thread for multi-threaded processes */
-	if (curproc->num_threads > 1 && curproc->current_thread && curproc->current_thread->tid != 0) {
-		sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
 	}
 
 	if (save_context(&newcurrent) == 0)
@@ -249,6 +268,12 @@ sendsig(ushort sig)
 	
 	curproc->ctxt[SYSCALL] = oldsysctxt;
 	assert(curproc->magic == CTXT_MAGIC);
+
+	/* If we originally switched from a thread, we should switch back */
+	if (original_thread) {
+		/* Switch back to the original thread */
+		sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_THREAD, original_thread->tid, 0);
+	}
 
 # undef oldsysctxt
 # undef newcurrent

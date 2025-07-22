@@ -450,19 +450,33 @@ do_wakeup_things(short sr, int newslice, long cond)
 	 */
 	auto int foo;
 	struct proc *p;
+	struct thread *current_thread;
 
 	p = curproc;
+	current_thread = p->current_thread;
 
 	if ((sr & 0x700) < 0x500)
 	{
 		/* skip all this if int level is too high */
-
-		if (p->pid && ((long) &foo) < (long) p->stack + ISTKSIZE + 512)
+		if (p->pid)
 		{
-			ALERT("stack underflow");
-			handle_sig(SIGBUS);
+			/* Check stack underflow - handle both threaded and non-threaded processes */
+			if (current_thread && current_thread->tid != 0) {
+				/* Multi-threaded process: check current thread's stack */
+				if (((long) &foo) < ((long) current_thread->stack + ISTKSIZE + 512))
+				{
+					ALERT("thread stack underflow");
+					handle_sig(SIGBUS);
+				}
+			} else {
+				/* Single-threaded process or main thread: check process stack */
+				if (((long) &foo) < (long) p->stack + ISTKSIZE + 512)
+				{
+					ALERT("stack underflow");
+					handle_sig(SIGBUS);
+				}
+			}
 		}
-
 		/* see if process' time limit has been exceeded */
 		if (p->maxcpu)
 		{
@@ -525,6 +539,7 @@ sleep(int _que, long cond)
 	short que = _que & 0xff;
 	unsigned long onsigs = curproc->nsigs;
 	int newslice = 1;
+	CONTEXT *_ctx;
 
 	/* save condition, checkbttys may just wake() it right away ...
 	 * note this assumes the condition will never be waked from interrupts
@@ -657,14 +672,13 @@ sleep(int _que, long cond)
 	/* p is our victim */
 	rm_q(READY_Q, p);
 	spl(sr);
-
 	/* Switch to main thread for multi-threaded processes */
 	if (curproc->current_thread && curproc->current_thread->tid != 0) {
-		/* Ignore errors from sys_p_thread_ctrl, as failures (EINVAL, ESRCH) are not critical here */
-		(void)sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
+		_ctx = &(curproc->current_thread->ctxt[CURRENT]);
+	} else {
+		_ctx = &(curproc->ctxt[CURRENT]);
 	}
-
-	if (save_context(&(curproc->ctxt[CURRENT])))
+	if (save_context(_ctx))
 	{
 		/*
 		 * restore per-process variables here
@@ -678,16 +692,21 @@ sleep(int _que, long cond)
 	/*
 	 * save per-process variables here
 	 */
-	curproc->ctxt[CURRENT].regs[0] = 1;
+	_ctx->regs[0] = 1;
 	curproc = p;
-
+	/* Switch to main thread for multi-threaded processes */
+	if (curproc->current_thread && curproc->current_thread->tid != 0) {
+		_ctx = &(curproc->current_thread->ctxt[CURRENT]);
+	} else {
+		_ctx = &(curproc->ctxt[CURRENT]);
+	}
 	proc_clock = time_slice;			/* fresh time */
 
-	if ((p->ctxt[CURRENT].sr & 0x2000) == 0)	/* user mode? */
+	if ((_ctx->sr & 0x2000) == 0)	/* user mode? */
 		leave_kernel();
 
 	assert(p->magic == CTXT_MAGIC);
-	change_context(&(p->ctxt[CURRENT]));
+	change_context(_ctx);
 
 	/* not reached */
 	return 0;

@@ -98,7 +98,14 @@
 
 #define THREAD_CTRL_IS_INITIAL        13  /* Check if current thread is initial */
 #define THREAD_CTRL_IS_MULTITHREADED  14  /* Check if process is multithreaded */
-#define THREAD_CTRL_SWITCH_TO_MAIN  15  /* Switch to main thread context */
+
+#ifndef THREAD_CTRL_SWITCH_TO_MAIN
+#define THREAD_CTRL_SWITCH_TO_MAIN  15	/* Switch to main thread context */
+#endif
+
+#ifndef THREAD_CTRL_SWITCH_TO_THREAD
+#define THREAD_CTRL_SWITCH_TO_THREAD	16
+#endif
 
 /* Wait types as bitfields */
 #define WAIT_NONE       0x0000  /* Not waiting */
