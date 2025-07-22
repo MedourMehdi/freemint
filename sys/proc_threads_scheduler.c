@@ -664,7 +664,7 @@ static int should_schedule_thread(struct thread *current, struct thread *next) {
     /* PRIORITY CHECK FIRST - Higher priority always preempts */
     if (next->priority > current->priority) {
         /* But respect minimum timeslice for non-boosted threads */
-        if (!next->priority_boost && elapsed < next->proc->thread_min_timeslice) {
+        if (!next->priority_boost && current->tid >= 0 && elapsed < next->proc->thread_min_timeslice) {
             TRACE_THREAD("THREAD_SCHED (should_schedule_thread): Higher priority thread %d waiting for min timeslice",
                         next->tid);
             return 0;

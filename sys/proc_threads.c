@@ -518,7 +518,7 @@ static void *idle_thread_func(void *arg) {
     p->pri = p->pri + 1;
 
     while (1) {
-        asm volatile("nop");
+        yield();
         proc_thread_schedule();
     }
 

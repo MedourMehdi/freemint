@@ -417,7 +417,7 @@ long _cdecl sys_p_thread_signal(long func, long arg1, long arg2) {
 
 long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
     
-    TRACE_THREAD("sys_p_thread_sync(OP = %ld, arg1 = %ld, arg2= %ld)", operator, arg1, arg2);
+    // TRACE_THREAD("sys_p_thread_sync(OP = %ld, arg1 = %ld, arg2= %ld)", operator, arg1, arg2);
     
     switch (operator) {
         case THREAD_SYNC_SEM_WAIT:
