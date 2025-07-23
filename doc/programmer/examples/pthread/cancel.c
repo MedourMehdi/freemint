@@ -1,4 +1,4 @@
-#include "mint_pthread.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,7 +16,7 @@ void* cancellable_thread(void* arg) {
     // Simulate some work
     for (int i = 0; i < 10; i++) {
         printf("Thread %d: Working... iteration %d\n", thread_id, i);
-        pthread_sleep_ms(1000);
+        msleep(1000);
         
         // Test cancellation point
         pthread_testcancel();
@@ -37,7 +37,7 @@ void* deferred_cancel_thread(void* arg) {
     // Disable cancellation temporarily
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
     printf("Thread %d (deferred): Cancellation disabled - doing critical work\n", thread_id);
-    pthread_sleep_ms(2000);
+    msleep(2000);
     
     // Re-enable cancellation
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
@@ -46,7 +46,7 @@ void* deferred_cancel_thread(void* arg) {
     // Loop with cancellation points
     for (int i = 0; i < 10; i++) {
         printf("Thread %d (deferred): Working... iteration %d\n", thread_id, i);
-        pthread_sleep_ms(1000);  // sleep() is a cancellation point
+        msleep(1000);  // sleep() is a cancellation point
     }
     
     printf("Thread %d (deferred): Completed normally\n", thread_id);
@@ -72,7 +72,7 @@ void* thread_with_cleanup(void* arg) {
     
     for (int i = 0; i < 10; i++) {
         printf("Thread %d (cleanup): Working... iteration %d\n", thread_id, i);
-        pthread_sleep_ms(1000);
+        msleep(1000);
         pthread_testcancel();
     }
     

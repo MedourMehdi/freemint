@@ -231,9 +231,6 @@ init_proc(void)
     rootproc->p_thread_timer.timeout = NULL;
     rootproc->p_thread_timer.in_handler = 0;
 	rootproc->idle_thread = NULL;
-	// /* Initialize process-wide TSD data */
-    // init_proc_tsd(rootproc);
-  
 }
 
 /* remaining_proc_time():

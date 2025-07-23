@@ -214,6 +214,7 @@ long proc_thread_sleep(long ms) {
     struct thread *t = p ? p->current_thread : NULL;
     register unsigned short sr;
     
+    TRACE_THREAD("SLEEP: Thread %d sleeping for %d ms", t->tid, ms);
     if (!p || !t) return EINVAL;
     if (t->tid == 0) return EINVAL; // thread0 can't sleep
     if (ms <= 0) return 0; // No need to sleep

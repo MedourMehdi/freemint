@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 // Shared data structure
 struct shared_data {
@@ -56,7 +56,8 @@ void *producer_thread(void *arg) {
         pthread_mutex_unlock(&data.mutex);
         
         // Sleep briefly
-        pthread_sleep_ms(100);
+        //msleep(100);
+	usleep(100000);
     }
     
     printf("Producer %d finished\n", producer_id);
@@ -101,7 +102,9 @@ void *consumer_thread(void *arg) {
         pthread_mutex_unlock(&data.mutex);
         
         // Sleep briefly
-        pthread_sleep_ms(150);
+        //msleep(150);
+	usleep(150000);
+
     }
     
     printf("Consumer %d finished (consumed %d items)\n", consumer_id, consumed);
@@ -155,11 +158,10 @@ int main() {
     
     // Let threads run for a while
     printf("Letting threads run...\n");
-    // pthread_sleep_ms(2000);
     
     // Wait for producers to finish
     for (int i = 0; i < 2; i++) {
-        if (pthread_join(producers[i], &retval) != 0) {
+        if (pthread_tryjoin_np(producers[i], &retval) != 0) {
             printf("Failed to join producer thread %d\n", i);
         } else {
             printf("Producer thread %d joined successfully\n", i+1);
@@ -176,7 +178,7 @@ int main() {
     
     // Wait for consumers to finish
     for (int i = 0; i < 2; i++) {
-        if (pthread_join(consumers[i], &retval) != 0) {
+        if (pthread_tryjoin_np(consumers[i], &retval) != 0) {
             printf("Failed to join consumer thread %d\n", i);
         } else {
             printf("Consumer thread %d joined successfully\n", i+1);

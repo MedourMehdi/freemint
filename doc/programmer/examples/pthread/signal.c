@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 // Global variables
 volatile int signal_count = 0;
@@ -18,7 +18,7 @@ void thread_signal_handler(int sig, void *arg) {
     pthread_mutex_unlock(&count_mutex);
     
     // Sleep briefly to test signal stack handling
-    pthread_sleep_ms(100);
+    msleep(100);
 }
 
 // Process signal handler

@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 void cleanup_handler1(void *arg) {
     printf("Cleanup Handler 1: %s\n", (char*)arg);

@@ -556,8 +556,10 @@ void proc_thread_exit(void *retval, void *arg) {
     // Mark thread as exited
     atomic_thread_state_change(current, THREAD_STATE_EXITED);
 
-    // ALWAYS decrement thread count when a thread exits
-    p->num_threads--;
+    if(tid > 0) {
+        p->num_threads--;
+    }
+
     TRACE_THREAD("EXIT: Thread %d exited, num_threads=%d", tid, p->num_threads);
     
     // Handle timers
@@ -664,7 +666,7 @@ static int should_schedule_thread(struct thread *current, struct thread *next) {
     /* PRIORITY CHECK FIRST - Higher priority always preempts */
     if (next->priority > current->priority) {
         /* But respect minimum timeslice for non-boosted threads */
-        if (!next->priority_boost && current->tid >= 0 && elapsed < next->proc->thread_min_timeslice) {
+        if (!next->priority_boost && current->tid >= 0 && elapsed < next->proc->thread_min_timeslice && (current->state & THREAD_STATE_RUNNING)) {
             TRACE_THREAD("THREAD_SCHED (should_schedule_thread): Higher priority thread %d waiting for min timeslice",
                         next->tid);
             return 0;
@@ -862,16 +864,19 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
     
     // Handle context switch based on thread state
     if ((ctx->from->wait_type & WAIT_SLEEP) || (ctx->from->wait_type & WAIT_JOIN)) {
+        TRACE_THREAD("SWITCH: Thread %d is sleeping, joining or waiting on semaphore, skipping switch", ctx->from->tid);
         // Sleeping thread path - direct context switch
         atomic_thread_state_change(ctx->to, THREAD_STATE_RUNNING);
         ctx->from->proc->current_thread = ctx->to;
         
         reset_thread_switch_state();
+        TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
         
         TRACE_THREAD("SWITCH ERROR: Returned from change_context!");
     } 
     else if (save_context(get_thread_context(ctx->from)) == 0) {
+        TRACE_THREAD("SWITCH: Saved context successfully for thread %d", ctx->from->tid);
         // Only change state if not blocked on mutex/semaphore
         if (ctx->from->wait_type == WAIT_NONE) {
             atomic_thread_state_change(ctx->from, THREAD_STATE_READY);
@@ -880,11 +885,12 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
         ctx->from->proc->current_thread = ctx->to;
         
         reset_thread_switch_state();
+        TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
         
         TRACE_THREAD("SWITCH ERROR: Returned from change_context!");
     }
-    
+    TRACE_THREAD("SWITCH: Return path after being switched back");
     // Return path after being switched back
     reset_thread_switch_state();
 }

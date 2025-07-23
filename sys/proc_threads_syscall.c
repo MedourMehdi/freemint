@@ -11,6 +11,7 @@
  */
 
 #include "proc_threads.h"
+#include "proc_threads_syscall.h"
 
 #include "proc_threads_policy.h"
 #include "proc_threads_signal.h"
@@ -40,10 +41,11 @@ typedef unsigned long size_t;
     (memcpy((void*)(dst), (const void*)(src), (size_t)(len)), 0)
 #endif
 
-long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
-    switch (mode) {
+long _cdecl sys_p_thread_ctrl(long func, long arg1, long arg2) {
+    TRACE_THREAD("CTRL: sys_p_thread_ctrl called with func=%ld arg1=%ld arg2=%ld", func, arg1, arg2);
+    switch (func) {
         case THREAD_CTRL_EXIT: // Exit thread
-            TRACE_THREAD("EXIT: sys_p_thread_ctrl called with exit mode");
+            TRACE_THREAD("EXIT: sys_p_thread_ctrl called with exit func");
             proc_thread_exit((void*)arg1, NULL);  // Use arg1 as the return value
             return 0;  // Should never reach here
 
@@ -141,7 +143,6 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
         }
 
         case THREAD_CTRL_STATUS:
-            // TRACE_THREAD("STATUS: proc_thread_status called for tid=%ld", arg1);
             // Get thread status
             return proc_thread_status(arg1);
 
@@ -285,20 +286,18 @@ long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2) {
         }
         
         default:
-            TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid mode %d", mode);
+            TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid func %d", func);
             return EINVAL;
     }
 }
 
 long _cdecl sys_p_thread_signal(long func, long arg1, long arg2) {
-    
     TRACE_THREAD("sys_p_thread_signal: func=%ld, arg1=%ld, arg2=%ld", func, arg1, arg2);
-    
     switch (func) {
         case PTSIG_MODE:
-            TRACE_THREAD("proc_thread_signal_mode: %s thread signals", 
-                        arg1 ? "enabling" : "disabling");
+            TRACE_THREAD("proc_thread_signal_mode: %s thread signals",  arg1 ? "enabling" : "disabling");
             return proc_thread_signal_mode((int)arg1);
+
         case PTSIG_KILL:
             {        
             TRACE_THREAD("PTSIG_KILL: arg1=%ld, arg2=%ld", arg1, arg2);
@@ -326,6 +325,7 @@ long _cdecl sys_p_thread_signal(long func, long arg1, long arg2) {
             TRACE_THREAD("PTSIG_KILL: Sending signal %ld to thread %d", arg2, target->tid);
             return proc_thread_signal_kill(target, (int)arg2);
             }
+
         case PTSIG_GETMASK:
             return proc_thread_signal_sigmask(0);
             
@@ -416,9 +416,7 @@ long _cdecl sys_p_thread_signal(long func, long arg1, long arg2) {
 }
 
 long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
-    
-    // TRACE_THREAD("sys_p_thread_sync(OP = %ld, arg1 = %ld, arg2= %ld)", operator, arg1, arg2);
-    
+    TRACE_THREAD("sys_p_thread_sync: operator=%d arg1=%d arg2=%d", operator, arg1, arg2);
     switch (operator) {
         case THREAD_SYNC_SEM_WAIT:
             TRACE_THREAD("THREAD_SYNC_SEM_WAIT");
@@ -644,12 +642,21 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
     }
 }
 
-long _cdecl sys_p_thread_sched_policy(long func, long arg1, long arg2, long arg3) {
+long _cdecl sys_p_pthread(long syscall_func, long arg1, long arg2, long arg3) {
     
-    TRACE_THREAD("IN KERNEL: sys_p_thread_sched_policy: func=%ld, arg1=%ld, arg2=%ld, arg3=%ld", 
-                func, arg1, arg2, arg3);
+    TRACE_THREAD("IN KERNEL: sys_p_pthread: syscall_func=%ld, arg1=%ld, arg2=%ld, arg3=%ld", 
+                syscall_func, arg1, arg2, arg3);
     
-    switch (func) {
+    switch (syscall_func) {
+        case P_THREAD_CTRL:
+            return sys_p_thread_ctrl(arg1, arg2, arg3);
+            
+        case P_THREAD_SYNC:
+            return sys_p_thread_sync(arg1, arg2, arg3);
+            
+        case P_THREAD_SIGNAL:
+            return sys_p_thread_signal(arg1, arg2, arg3);
+            
         case PSCHED_SETPARAM:
             return proc_thread_set_schedparam(arg1, arg2, arg3);
             
@@ -664,58 +671,36 @@ long _cdecl sys_p_thread_sched_policy(long func, long arg1, long arg2, long arg3
             
         case PSCHED_GET_TIMESLICE:
             return proc_thread_get_timeslice(arg1, (long*)arg2, (long*)arg3);
-            
-        default:
-            return EINVAL;
-    }
-}
 
-/**
- * Atomic operations system call dispatcher
- * 
- * @param operation - The atomic operation to perform
- * @param ptr - Pointer to the value to operate on
- * @param arg1 - First argument (value for most operations, oldval for CAS)
- * @param arg2 - Second argument (newval for CAS, unused for others)
- * @return Result of the atomic operation
- */
-long _cdecl sys_p_thread_atomic(long operation, long ptr, long arg1, long arg2) {
-    volatile int *target = (volatile int *)ptr;
-    
-    /* Validate pointer */
-    if (!target) {
-        return EINVAL;
-    }
-    
-    switch (operation) {
         case THREAD_ATOMIC_INCREMENT:
-            return atomic_increment(target);
+            return !((volatile int *)arg1) ? EINVAL : atomic_increment((volatile int *)arg1);
             
         case THREAD_ATOMIC_DECREMENT:
-            return atomic_decrement(target);
+            return !((volatile int *)arg1) ? EINVAL : atomic_decrement((volatile int *)arg1);
             
         case THREAD_ATOMIC_CAS:
-            return atomic_cas(target, (int)arg1, (int)arg2);
+            return !((volatile int *)arg1) ? EINVAL : atomic_cas((volatile int *)arg1, (int)arg2, (int)arg3);
             
         case THREAD_ATOMIC_EXCHANGE:
-            return atomic_exchange(target, (int)arg1);
+            return !((volatile int *)arg1) ? EINVAL : atomic_exchange((volatile int *)arg1, (int)arg2);
             
         case THREAD_ATOMIC_ADD:
-            return atomic_add(target, (int)arg1);
+            return !((volatile int *)arg1) ? EINVAL : atomic_add((volatile int *)arg1, (int)arg2);
             
         case THREAD_ATOMIC_SUB:
-            return atomic_sub(target, (int)arg1);
+            return !((volatile int *)arg1) ? EINVAL : atomic_sub((volatile int *)arg1, (int)arg2);
             
         case THREAD_ATOMIC_OR:
-            return atomic_or(target, (int)arg1);
+            return !((volatile int *)arg1) ? EINVAL : atomic_or((volatile int *)arg1, (int)arg2);
             
         case THREAD_ATOMIC_AND:
-            return atomic_and(target, (int)arg1);
+            return !((volatile int *)arg1) ? EINVAL : atomic_and((volatile int *)arg1, (int)arg2);
             
         case THREAD_ATOMIC_XOR:
-            return atomic_xor(target, (int)arg1);
-            
+            return !((volatile int *)arg1) ? EINVAL : atomic_xor((volatile int *)arg1, (int)arg2);
+
         default:
+            TRACE_THREAD("P_THREAD_UNKNOWN: %ld", syscall_func);
             return EINVAL;
     }
 }

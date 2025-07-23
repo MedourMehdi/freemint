@@ -16,17 +16,6 @@
 
 #include "proc_threads.h"
 
-/* Atomic operations syscall constants */
-#define THREAD_ATOMIC_INCREMENT     1
-#define THREAD_ATOMIC_DECREMENT     2
-#define THREAD_ATOMIC_CAS           3   /* Compare and swap */
-#define THREAD_ATOMIC_EXCHANGE      4   /* Atomic exchange */
-#define THREAD_ATOMIC_ADD           5   /* Atomic add */
-#define THREAD_ATOMIC_SUB           6   /* Atomic subtract */
-#define THREAD_ATOMIC_OR            7   /* Atomic bitwise OR */
-#define THREAD_ATOMIC_AND           8   /* Atomic bitwise AND */
-#define THREAD_ATOMIC_XOR           9   /* Atomic bitwise XOR */
-
 /* Thread-safe linked list operations */
 int thread_atomic_list_add(struct thread **head, struct thread *new_thread);
 int thread_atomic_list_remove(struct thread **head, struct thread *thread_to_remove);

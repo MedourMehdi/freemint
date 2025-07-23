@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "mint_pthread.h"
+#include <pthread.h>
 
 /* Test code using standard pthread functions */
 
@@ -24,8 +24,8 @@ void *mutex_test_thread(void *arg) {
     if (pthread_mutex_lock(&my_mutex) == 0) {
         printf("Mutex locked by thread %d (ID: %ld)\n", thread_num, pthread_self());
         
-        // Sleep for 2 seconds while holding the mutex
-        proc_thread_sleep(2000);
+        // Sleep for 500ms while holding the mutex
+        msleep(500);
         
         // Unlock the mutex
         if (pthread_mutex_unlock(&my_mutex) == 0) {
@@ -50,8 +50,8 @@ void *semaphore_test_thread(void *arg) {
     if (sem_wait(&my_semaphore) == 0) {
         printf("Semaphore acquired by thread %d (ID: %ld)\n", thread_num, pthread_self());
         
-        // Sleep for 2 seconds while holding the semaphore
-        proc_thread_sleep(2000);
+        // Sleep for 500ms while holding the semaphore
+        msleep(500);
         
         // Release the semaphore
         if (sem_post(&my_semaphore) == 0) {
@@ -106,7 +106,6 @@ int main() {
     
     while (done < 2)
     {
-        // printf("done = %d\n", done);
         sleep(1);
     }
     

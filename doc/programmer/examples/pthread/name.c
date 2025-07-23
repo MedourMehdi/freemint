@@ -2,11 +2,11 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 void* thread_func(void* arg) {
     printf("Thread started\n");
-    pthread_sleep_ms(1000);
+    msleep(1000);
     return NULL;
 }
 

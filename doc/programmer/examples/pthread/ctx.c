@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 #define DEFAULT_ITERATIONS 1000
 #define DEFAULT_THREADS 5
@@ -180,3 +180,4 @@ int main(int argc, char *argv[]) {
     printf("Benchmark completed successfully\n");
     return 0;
 }
+

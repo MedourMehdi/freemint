@@ -16,24 +16,6 @@
 #ifndef PROC_THREADS_SIGNAL_H
 #define PROC_THREADS_SIGNAL_H
 
-/* Operation codes for Pthreadsignal */
-typedef enum {
-    PTSIG_SETMASK        = 1,  /* Set thread signal mask */
-    PTSIG_GETMASK        = 2,  /* Get thread signal mask (handler=0) */
-    PTSIG_MODE           = 3,  /* Set thread signal mode (enable/disable) */
-    PTSIG_KILL           = 4,  /* Send signal to thread */
-    PTSIG_WAIT           = 5,  /* Wait for signals */
-    PTSIG_BLOCK          = 6,  /* Block signals (add to mask) */
-    PTSIG_UNBLOCK        = 7,  /* Unblock signals (remove from mask) */
-    PTSIG_PAUSE          = 8,  /* Pause with specified mask */
-    PTSIG_ALARM          = 9,  /* Set thread alarm */
-    PTSIG_PENDING        = 11, /* Get pending signals */
-    PTSIG_HANDLER        = 12, /* Register thread signal handler */
-    PTSIG_HANDLER_ARG    = 14, /* Set argument for thread signal handler */
-    PTSIG_ALARM_THREAD   = 16,  /* Set alarm for specific thread */
-    PTSIG_BROADCAST      = 17  /* Broadcast signal to all threads */
-} ptsig_op_t;
-
 /* signal flags */
 # define SAS_OLDMASK	0x01		/* need to restore mask before pause */
 # define SAS_THREADED	0x02		/* process uses thread-specific signals */

@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "mint_pthread.h"
+#include <pthread.h>
 
 // Global flag for synchronization
 volatile int thread_done = 0;

@@ -13,6 +13,7 @@
  * 
  * Key components:
  *  proc_threads_sync.[ch]      - Synchronization objects
+ *  proc_threads_mutex.[ch]     - Mutexes
  *  proc_threads_scheduler.[ch] - Scheduler core
  *  proc_threads_policy.[ch]    - Scheduling policies
  *  proc_threads_signal.[ch]    - Signal handling
@@ -48,66 +49,23 @@
 #ifndef PROC_THREAD_H
 #define PROC_THREAD_H
 
-#define THREAD_SUCCESS  0 // Success
+/* ============================================================================
+ * THREAD STATES AND WAIT TYPES
+ * ============================================================================ */
 
-#define MS_PER_TICK 5 // 200Hz = 5ms/tick
-#define MAX_SWITCH_RETRIES 3
+/* Thread States (bitfield values) */
+#define THREAD_STATE_RUNNING    0x0001  /* Currently executing */
+#define THREAD_STATE_READY      0x0002  /* On run queue, can be scheduled */
+#define THREAD_STATE_BLOCKED    0x0004  /* Sleeping, waiting for event */
+#define THREAD_STATE_STOPPED    0x0008  /* Stopped by signal */
+#define THREAD_STATE_ZOMBIE     0x0010  /* Exited, not yet reaped */
+#define THREAD_STATE_DEAD       0x0020  /* Fully dead, resources can be freed */
 
-#define MAX_POSIX_THREAD_PRIORITY 99 /* POSIX thread priority range */
-#define MAX_THREAD_PRIORITY 16 /* Maximum thread priority (scaled from POSIX 0-99 range) */
-/* 
- * Thread priority scaling:
- * - User-facing API accepts priorities in the standard POSIX range (0-99)
- * - Internally, priorities are scaled to 0-16 range when set via syscalls
- * - This allows efficient bitmap operations while maintaining POSIX compatibility
- * - Scaling uses fast multiply-shift: (priority * 10923) >> 16 ≈ (priority * 16) / 99
- */
-#define THREAD_CREATION_PRIORITY_BOOST 3  /* Priority boost for newly created threads */
-
-/* Default scheduling policy */
-#define DEFAULT_SCHED_POLICY SCHED_FIFO
-
-/*
-	RUNNING	0x0001	Currently executing
-	READY	0x0002	On run queue, can be scheduled
-	BLOCKED	0x0004	Sleeping, waiting for event
-	STOPPED	0x0010	Stopped by signal
-	ZOMBIE	0x0020	Exited, not yet reaped
-	DEAD	0x0040	Fully dead, resources can be freed
-*/
-#define THREAD_STATE_RUNNING    0x0001
-#define THREAD_STATE_READY      0x0002
-#define THREAD_STATE_BLOCKED	0x0004
-#define THREAD_STATE_STOPPED	0x0008
-#define THREAD_STATE_ZOMBIE		0x0010
-#define THREAD_STATE_DEAD		0x0020
-// For checks only:
+/* Composite states for convenience */
 #define THREAD_STATE_EXITED     (THREAD_STATE_ZOMBIE | THREAD_STATE_DEAD)
 #define THREAD_STATE_LIVE       (THREAD_STATE_RUNNING | THREAD_STATE_READY)
 
-/* Thread operation modes for sys_p_thread_ctrl */
-#define THREAD_CTRL_EXIT     0   /* Exit the current thread */
-#define THREAD_CTRL_CANCEL   1   /* Cancel a thread */
-#define THREAD_CTRL_STATUS   4   /* Get thread status */
-#define THREAD_CTRL_GETID    5	/* Get thread ID */
-#define THREAD_CTRL_SETCANCELSTATE 6
-#define THREAD_CTRL_SETCANCELTYPE  7
-#define THREAD_CTRL_TESTCANCEL     8
-#define THREAD_CTRL_SETNAME  9   /* Set thread name */
-#define THREAD_CTRL_GETNAME  10  /* Get thread name */
-
-#define THREAD_CTRL_IS_INITIAL        13  /* Check if current thread is initial */
-#define THREAD_CTRL_IS_MULTITHREADED  14  /* Check if process is multithreaded */
-
-#ifndef THREAD_CTRL_SWITCH_TO_MAIN
-#define THREAD_CTRL_SWITCH_TO_MAIN  15	/* Switch to main thread context */
-#endif
-
-#ifndef THREAD_CTRL_SWITCH_TO_THREAD
-#define THREAD_CTRL_SWITCH_TO_THREAD	16
-#endif
-
-/* Wait types as bitfields */
+/* Wait Types (bitfield values) */
 #define WAIT_NONE       0x0000  /* Not waiting */
 #define WAIT_JOIN       0x0001  /* Waiting for thread to exit */
 #define WAIT_MUTEX      0x0002  /* Waiting for mutex */
@@ -118,78 +76,73 @@
 #define WAIT_SLEEP      0x0040  /* Sleeping */
 #define WAIT_OTHER      0x0080  /* Other wait reason */
 
-/* Thread scheduling system call constants */
-#define PSCHED_SETPARAM       1
-#define PSCHED_GETPARAM       2
-#define PSCHED_GETRRINTERVAL  4
-#define PSCHED_SET_TIMESLICE  5
-#define PSCHED_GET_TIMESLICE  6
+/* ============================================================================
+ * P_THREAD_SIGNAL OPERATIONS (sys_p_thread_signal)
+ * ============================================================================ */
+#define PTSIG_MODE              0   /* Enable/disable thread signals */
+#define PTSIG_KILL              1   /* Send signal to specific thread */
+#define PTSIG_GETMASK           2   /* Get thread signal mask */
+#define PTSIG_SETMASK           3   /* Set thread signal mask */
+#define PTSIG_BLOCK             4   /* Block signals */
+#define PTSIG_UNBLOCK           5   /* Unblock signals */
+#define PTSIG_WAIT              6   /* Wait for signal */
+#define PTSIG_HANDLER           7   /* Set signal handler */
+#define PTSIG_HANDLER_ARG       8   /* Set signal handler with argument */
+#define PTSIG_PENDING           9   /* Get pending signals */
+#define PTSIG_ALARM             10   /* Set alarm signal */
+#define PTSIG_ALARM_THREAD      11   /* Set alarm signal for specific thread */
+#define PTSIG_PAUSE             12   /* Pause with specified mask */
+#define PTSIG_BROADCAST         13   /* Broadcast signal to all threads */
 
-#define THREAD_SYNC_SEM_WAIT		1
-#define THREAD_SYNC_SEM_POST		2
-#define THREAD_SYNC_MUTEX_LOCK		3
-#define THREAD_SYNC_MUTEX_UNLOCK	4
-#define THREAD_SYNC_MUTEX_INIT		5
-#define THREAD_SYNC_SEM_INIT		6
-#define THREAD_SYNC_JOIN			7   /* Join a thread and wait for it to terminate */
-#define THREAD_SYNC_DETACH			8   /* Detach a thread, making it unjoinable */
-#define THREAD_SYNC_TRYJOIN			9   /* Non-blocking join (new) */
-#define THREAD_SYNC_SLEEP			10  /* Sleep for a specified number of milliseconds */
-#define THREAD_SYNC_YIELD			11  /* Yield the current thread */
+/* ============================================================================
+ * PTHREAD COMPATIBILITY CONSTANTS
+ * ============================================================================ */
 
-/* Condition variable system call constants */
-#define THREAD_SYNC_COND_INIT       12
-#define THREAD_SYNC_COND_DESTROY    13
-#define THREAD_SYNC_COND_WAIT       14
-#define THREAD_SYNC_COND_TIMEDWAIT  15
-#define THREAD_SYNC_COND_SIGNAL     16
-#define THREAD_SYNC_COND_BROADCAST  17
-
-/* Cleanup operation constants for syscalls */
-#define THREAD_SYNC_CLEANUP_PUSH    18
-#define THREAD_SYNC_CLEANUP_POP     19
-#define THREAD_SYNC_CLEANUP_GET     20
-
-/* Thread-specific data operations */
-#define THREAD_TSD_CREATE_KEY    21   /* Create a new key */
-#define THREAD_TSD_DELETE_KEY    22   /* Delete a key */
-#define THREAD_TSD_GET_SPECIFIC  23   /* Get thread-specific data */
-#define THREAD_TSD_SET_SPECIFIC  24   /* Set thread-specific data */
-
-/* Reader-writer lock operations */
-#define THREAD_SYNC_RWLOCK_INIT			25
-#define THREAD_SYNC_RWLOCK_DESTROY		26
-#define THREAD_SYNC_RWLOCK_RDLOCK		27
-#define THREAD_SYNC_RWLOCK_WRLOCK		28
-#define THREAD_SYNC_RWLOCK_UNLOCK		29
-#define THREAD_SYNC_RWLOCK_TRYRDLOCK	30
-#define THREAD_SYNC_RWLOCK_TRYWRLOCK	31
-
-#define THREAD_SYNC_MUTEX_ATTR_INIT		32
-#define THREAD_SYNC_MUTEX_ATTR_DESTROY	33
-#define THREAD_SYNC_MUTEX_DESTROY		34
-#define THREAD_SYNC_MUTEX_TRYLOCK		35
-
-#define THREAD_SYNC_MUTEXATTR_SETTYPE      36
-#define THREAD_SYNC_MUTEXATTR_SETPROTOCOL  37
-#define THREAD_SYNC_MUTEXATTR_SETPRIOCEILING 38
-#define THREAD_SYNC_MUTEXATTR_GETTYPE      39
-#define THREAD_SYNC_MUTEXATTR_GETPROTOCOL  40
-#define THREAD_SYNC_MUTEXATTR_GETPRIOCEILING 41
-
-/* Thread cancellation constants */
+/* Thread Cancellation */
 #define PTHREAD_CANCEL_ENABLE       0   /* Enable cancellation */
 #define PTHREAD_CANCEL_DISABLE      1   /* Disable cancellation */
-#define PTHREAD_CANCEL_DEFERRED     0   /* Deferred cancellation (at cancellation points) */
-#define PTHREAD_CANCEL_ASYNCHRONOUS 1   /* Asynchronous cancellation (immediate) */
-#define PTHREAD_CANCELED           ((void *)-1)  /* Return value for canceled threads */
+#define PTHREAD_CANCEL_DEFERRED     0   /* Deferred cancellation */
+#define PTHREAD_CANCEL_ASYNCHRONOUS 1   /* Asynchronous cancellation */
+#define PTHREAD_CANCELED           ((void *)-1)  /* Canceled thread return value */
 
- #define CURTHREAD \
- 	((curproc && curproc->current_thread) ? curproc->current_thread : NULL)
+/* Mutex Types (for mutexattr) */
+#define PTHREAD_MUTEX_NORMAL        0   /* Normal mutex */
+#define PTHREAD_MUTEX_RECURSIVE     1   /* Recursive mutex */
+#define PTHREAD_MUTEX_ERRORCHECK    2   /* Error-checking mutex */
 
-long proc_thread_status(long tid);
-CONTEXT* get_thread_context(struct thread *t);
-struct thread* get_idle_thread(struct proc *p);
-struct thread* get_main_thread(struct proc *p);
+/* Mutex Protocols (for priority inheritance) */
+#define PTHREAD_PRIO_NONE           0   /* No priority inheritance */
+#define PTHREAD_PRIO_INHERIT        1   /* Priority inheritance */
+#define PTHREAD_PRIO_PROTECT        2   /* Priority ceiling protocol */
+
+/* ============================================================================
+ * SYSTEM CONSTANTS
+ * ============================================================================ */
+#define THREAD_SUCCESS              0   /* Operation successful */
+#define MS_PER_TICK                 5   /* Milliseconds per system tick (200Hz) */
+#define MAX_SWITCH_RETRIES          3   /* Maximum context switch retry attempts */
+/* 
+ * Thread priority scaling:
+ * - User-facing API accepts priorities in the standard POSIX range (0-99)
+ * - Internally, priorities are scaled to 0-16 range when set via syscalls
+ * - This allows efficient bitmap operations while maintaining POSIX compatibility
+ * - Scaling uses fast multiply-shift: (priority * 10923) >> 16 ≈ (priority * 16) / 99
+ */
+#define MAX_POSIX_THREAD_PRIORITY  99   /* Maximum POSIX thread priority */
+#define MAX_THREAD_PRIORITY        16   /* Internal maximum thread priority */
+#define THREAD_CREATION_PRIORITY_BOOST 3   /* Priority boost for new threads */
+#define DEFAULT_SCHED_POLICY   SCHED_FIFO   /* Default scheduling policy */
+
+/* Current thread macro */
+#define CURTHREAD \
+    ((curproc && curproc->current_thread) ? curproc->current_thread : NULL)
+
+/* ============================================================================
+ * FUNCTION PROTOTYPES
+ * ============================================================================ */
+long proc_thread_status(long tid); /* Get thread status */
+CONTEXT* get_thread_context(struct thread *t); /* Get thread context */
+struct thread* get_idle_thread(struct proc *p);	/* Get idle thread */
+struct thread* get_main_thread(struct proc *p);	/* Get main thread */
 
 #endif /* PROC_THREAD_H */

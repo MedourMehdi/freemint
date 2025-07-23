@@ -27,6 +27,8 @@
 #include "proc_threads_tsd.h"
 #include "proc_threads_cleanup.h"
 
+#include "dosfile.h"
+
 #define PTHREAD_CREATE_DETACHED  1
 
 /* Thread attribute type */
@@ -496,6 +498,7 @@ long proc_thread_status(long tid) {
     
     if (!target) {
         spl(sr);
+        TRACE_THREAD("STATUS: No such thread %d", tid);
         return ESRCH;  // Thread not found
     }
     
@@ -518,7 +521,14 @@ static void *idle_thread_func(void *arg) {
     p->pri = p->pri + 1;
 
     while (1) {
-        yield();
+        /* This make the PREEMPT Timer function to never fire! 
+        * Need to be fixed.
+        */
+        // yield(); 
+        // sys_f_select (1L, 0L, 0L, 0L);
+
+        asm volatile("nop");
+        
         proc_thread_schedule();
     }
 

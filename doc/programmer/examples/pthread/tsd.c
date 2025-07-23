@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "mint_pthread.h"
+#include <pthread.h>
+#include <unistd.h>
 
 /* Thread-specific data key */
 pthread_key_t key;
@@ -33,7 +34,7 @@ void *thread_func(void *arg)
     printf("Thread %d: TSD value = %d\n", thread_num, *tsd_value);
     
     /* Sleep to demonstrate destructor */
-    proc_thread_sleep(100);
+    sleep(1);
     
     /* Get and print thread-specific value again */
     tsd_value = pthread_getspecific(key);
@@ -44,13 +45,15 @@ void *thread_func(void *arg)
 
 int main(void)
 {
+    long result;
     pthread_t threads[3];
     int thread_nums[3] = {1, 2, 3};
     int i;
     
     /* Create thread-specific data key */
-    if (pthread_key_create(&key, destructor) != 0) {
-        printf("Failed to create thread-specific data key\n");
+    result = pthread_key_create(&key, destructor);
+    if (result != 0) {
+        printf("Failed to create thread-specific data key -> %ld\n", result);
         return 1;
     }
     

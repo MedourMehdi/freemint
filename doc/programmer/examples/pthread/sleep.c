@@ -3,8 +3,10 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <mint/mintbind.h>
+#include <pthread.h>
 
-#include "mint_pthread.h"
+#define THREAD_SYNC_SLEEP 10
 
 /* Global shared variables */
 volatile int counter = 0;
@@ -28,7 +30,8 @@ void *thread1_func(void *arg) {
         
         // Get current time before sleep
         gettimeofday(&sleep_time, NULL);
-        proc_thread_sleep(2700);
+        msleep(2000);
+        // trap_1_wlll(0x18A, 10L, 2000L, 0L);
         
         // Get current time after wake up
         gettimeofday(&wake_time, NULL);
@@ -87,8 +90,10 @@ int main(void) {
     
     printf("Main: threads created (tid1=%ld, tid2=%ld)\n", (long)thread1, (long)thread2);
 
-    pthread_tryjoin(thread1, NULL);
-    pthread_tryjoin(thread2, NULL);
+    pthread_tryjoin_np(thread1, NULL);
+    pthread_tryjoin_np(thread2, NULL);
+    // pthread_join(thread1, NULL);
+    // pthread_join(thread2, NULL);    
 
     printf("Main: all threads finished, counter final = %d\n", counter);
     

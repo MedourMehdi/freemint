@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/time.h>
-#include "mint_pthread.h"
+#include <pthread.h>
 
 #define NUM_THREADS 5
 #define ITERATIONS 1000000
@@ -54,7 +54,7 @@ void *sleep_thread(void *arg)
         
           
     /* Sleep for the specified time */
-    pthread_sleep_ms(sleep_time);
+    msleep(sleep_time);
 
     // Get current time after wake up
     gettimeofday(&effective_wake_time, NULL);

@@ -149,25 +149,18 @@ struct thread_join {
     int joined;                /* Flag indicating join completed */
 };
 
-#ifndef THREAD_CTRL_SWITCH_TO_MAIN
-#define THREAD_CTRL_SWITCH_TO_MAIN  15
-#endif
+#include "proc_threads_syscall.h"
 
-#ifndef THREAD_CTRL_SWITCH_TO_THREAD
-#define THREAD_CTRL_SWITCH_TO_THREAD	16
-#endif
+/* From proc_threads_syscall.c */
 
-long _cdecl sys_p_thread_ctrl(long mode, long arg1, long arg2);
-long _cdecl sys_p_thread_signal(long func, long arg1, long arg2);
-long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2);
-long _cdecl sys_p_thread_sched_policy(long func, long arg1, long arg2, long arg3);
-long _cdecl sys_p_thread_atomic(long operation, long ptr, long arg1, long arg2);
-
-long _cdecl proc_thread_create(void *(*func)(void*), void *arg, void *stack);
-void proc_thread_cleanup_process(struct proc *pcurproc); /** Called in terminate function - k_exit.c */
-int proc_thread_signal_aware_raise(struct proc *p, int sig);
-void dispatch_thread_signals(struct thread *t);
-int init_proc_tsd(struct proc *p);
+/* From proc_threads.c */
+long _cdecl proc_thread_create(void *(*func)(void*), void *arg, void *stack); /* Called by Pexec() - k_exec.c */
+/* From proc_threads.c */
+void proc_thread_cleanup_process(struct proc *pcurproc); /* Called by terminate() - k_exit.c */
+/* From proc_threads_signal.c */
+int proc_thread_signal_aware_raise(struct proc *p, int sig); /* Called by post_sig() - signal.c */
+/* From proc_threads_signal.c */
+void dispatch_thread_signals(struct thread *t); /* Called by check_sigs() and post_sig() - signal.c */
 
 /* End of Threads stuff */
 

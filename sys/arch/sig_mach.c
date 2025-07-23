@@ -76,7 +76,6 @@ sendsig(ushort sig)
 
 	/* Switch to main thread for multi-threaded processes */
 	if (original_thread) {
-		// save_context(&(curproc->current_thread->ctxt[CURRENT]));
 		sys_p_thread_ctrl(THREAD_CTRL_SWITCH_TO_MAIN, 0, 0);
 	}
 
