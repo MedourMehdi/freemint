@@ -117,7 +117,8 @@ int main() {
     int producer_ids[2] = {1, 2};
     int consumer_ids[2] = {1, 2};
     void *retval;
-    
+    int return_value = 0;
+
     printf("=== Condition Variable Test: Producer-Consumer ===\n");
     
     // Initialize condition variables
@@ -146,7 +147,8 @@ int main() {
         }
         printf("Created producer thread %d (tid=%ld)\n", i+1, producers[i]);
     }
-    
+
+
     // Create consumer threads
     for (int i = 0; i < 2; i++) {
         if (pthread_create(&consumers[i], NULL, consumer_thread, &consumer_ids[i]) != 0) {
@@ -160,9 +162,12 @@ int main() {
     printf("Letting threads run...\n");
     
     // Wait for producers to finish
+    
     for (int i = 0; i < 2; i++) {
-        if (pthread_tryjoin_np(producers[i], &retval) != 0) {
-            printf("Failed to join producer thread %d\n", i);
+        return_value = pthread_join(producers[i], &retval);
+        // return_value = pthread_tryjoin_np(producers[i], &retval);
+        if (return_value != 0) {
+            printf("Failed to join producer thread %d, return value: %d\n", i, return_value);
         } else {
             printf("Producer thread %d joined successfully\n", i+1);
         }
@@ -178,8 +183,10 @@ int main() {
     
     // Wait for consumers to finish
     for (int i = 0; i < 2; i++) {
-        if (pthread_tryjoin_np(consumers[i], &retval) != 0) {
-            printf("Failed to join consumer thread %d\n", i);
+        // return_value = pthread_tryjoin_np(consumers[i], &retval);
+        return_value = pthread_join(consumers[i], &retval);
+        if (return_value != 0) {
+            printf("Failed to join consumer thread %d, return value: %d\n", i, return_value);
         } else {
             printf("Consumer thread %d joined successfully\n", i+1);
         }

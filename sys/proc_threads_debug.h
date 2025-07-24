@@ -24,10 +24,8 @@
 
 /* Thread debugging levels */
 #define THREAD_DEBUG_NONE     0  /* No thread debugging */
-#define THREAD_DEBUG_MINIMAL  1  /* Only critical thread operations */
-#define THREAD_DEBUG_NORMAL   2  /* Normal thread operations */
-#define THREAD_DEBUG_VERBOSE  3  /* Verbose thread operations */
-#define THREAD_DEBUG_ALL      4  /* All thread operations including queue dumps */
+#define THREAD_DEBUG_NORMAL   1  /* Normal thread operations */
+#define THREAD_DEBUG_VERBOSE  2  /* Verbose thread operations */
 
 /* Current thread debug level - change this to adjust verbosity */
 #define THREAD_DEBUG_LEVEL THREAD_DEBUG_NONE
@@ -47,18 +45,18 @@ extern void debug_to_file(const char *filename, const char *fmt, ...);
 
 /* Special macros for common operations */
 #define TRACE_THREAD_STATE(t, old_state, new_state) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_MINIMAL, "STATE: Thread %d state change from %d to %d", \
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_NORMAL, "STATE: Thread %d state change from %d to %d", \
                       (t)->tid, old_state, new_state)
 
 #define TRACE_THREAD_SWITCH(from, to) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_MINIMAL, "SWITCH: Switching threads: %d -> %d", \
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_NORMAL, "SWITCH: Switching threads: %d -> %d", \
                       (from)->tid, (to)->tid)
 
 #define TRACE_THREAD_QUEUE_BEFORE(t) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_ALL, "READY_Q: Current queue before adding thread %d:", (t)->tid)
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_VERBOSE, "READY_Q: Current queue before adding thread %d:", (t)->tid)
 
 #define TRACE_THREAD_QUEUE_AFTER(t) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_ALL, "READY_Q: Final queue after adding thread %d:", (t)->tid)
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_VERBOSE, "READY_Q: Final queue after adding thread %d:", (t)->tid)
 
 #define TRACE_THREAD_SCHED(fmt, ...) \
     TRACE_THREAD_LEVEL(THREAD_DEBUG_NORMAL, "SCHED: " fmt, ##__VA_ARGS__)
@@ -69,7 +67,7 @@ extern void debug_to_file(const char *filename, const char *fmt, ...);
                       (t)->tid, func, arg)
 
 #define TRACE_THREAD_EXIT(t, retval) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_MINIMAL, "EXIT: Thread %d exiting with retval=%p", \
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_NORMAL, "EXIT: Thread %d exiting with retval=%p", \
                       (t)->tid, retval)
 
 #define TRACE_THREAD_SLEEP(t, ms, ticks, wake_time) \
@@ -92,7 +90,7 @@ extern void debug_to_file(const char *filename, const char *fmt, ...);
                       (joiner)->tid, (target)->tid)
 
 #define TRACE_THREAD_ERROR(fmt, ...) \
-    TRACE_THREAD_LEVEL(THREAD_DEBUG_MINIMAL, "ERROR: " fmt, ##__VA_ARGS__)
+    TRACE_THREAD_LEVEL(THREAD_DEBUG_NORMAL, "ERROR: " fmt, ##__VA_ARGS__)
 
 #else
 /* No-op versions when debugging is disabled */

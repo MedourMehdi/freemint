@@ -357,8 +357,10 @@ static int set_thread_timeslice(struct thread *t, long timeslice)
  */
 void update_thread_timeslice(struct thread *t)
 {
-    if (!t || t->magic != CTXT_MAGIC)
+    if (!t || t->magic != CTXT_MAGIC){
+        TRACE_THREAD("TIMESLICE: Invalid thread pointer");
         return;
+    }
         
     unsigned long elapsed = get_system_ticks() - t->last_scheduled;
     
@@ -372,9 +374,6 @@ void update_thread_timeslice(struct thread *t)
             t->remaining_timeslice -= elapsed;
         }
     }
-    
-    // Update last scheduled time
-    // t->last_scheduled = get_system_ticks();
 }
 
 // Function to set thread scheduling policy

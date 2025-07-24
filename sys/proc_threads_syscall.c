@@ -42,7 +42,7 @@ typedef unsigned long size_t;
 #endif
 
 long _cdecl sys_p_thread_ctrl(long func, long arg1, long arg2) {
-    TRACE_THREAD("CTRL: sys_p_thread_ctrl called with func=%ld arg1=%ld arg2=%ld", func, arg1, arg2);
+    // TRACE_THREAD("CTRL: sys_p_thread_ctrl called with func=%ld arg1=%ld arg2=%ld", func, arg1, arg2);
     switch (func) {
         case THREAD_CTRL_EXIT: // Exit thread
             TRACE_THREAD("EXIT: sys_p_thread_ctrl called with exit func");
@@ -416,7 +416,7 @@ long _cdecl sys_p_thread_signal(long func, long arg1, long arg2) {
 }
 
 long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
-    TRACE_THREAD("sys_p_thread_sync: operator=%d arg1=%d arg2=%d", operator, arg1, arg2);
+    // TRACE_THREAD("sys_p_thread_sync: operator=%d arg1=%d arg2=%d", operator, arg1, arg2);
     switch (operator) {
         case THREAD_SYNC_SEM_WAIT:
             TRACE_THREAD("THREAD_SYNC_SEM_WAIT");
@@ -556,7 +556,7 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
             return proc_thread_detach(arg1);
 
         case THREAD_SYNC_TRYJOIN:
-            TRACE_THREAD("TRYJOIN: proc_thread_tryjoin called for tid=%ld", arg1);
+            // TRACE_THREAD("TRY_JOIN: proc_thread_tryjoin called for tid=%ld", arg1);
             // New non-blocking join
             return proc_thread_tryjoin(arg1, (void **)arg2);
 
@@ -644,8 +644,7 @@ long _cdecl sys_p_thread_sync(long operator, long arg1, long arg2) {
 
 long _cdecl sys_p_pthread(long syscall_func, long arg1, long arg2, long arg3) {
     
-    TRACE_THREAD("IN KERNEL: sys_p_pthread: syscall_func=%ld, arg1=%ld, arg2=%ld, arg3=%ld", 
-                syscall_func, arg1, arg2, arg3);
+    // TRACE_THREAD("IN KERNEL: sys_p_pthread: syscall_func=%ld, arg1=%ld, arg2=%ld, arg3=%ld", syscall_func, arg1, arg2, arg3);
     
     switch (syscall_func) {
         case P_THREAD_CTRL:

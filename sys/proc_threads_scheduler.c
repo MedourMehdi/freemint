@@ -30,39 +30,43 @@
 #include "proc_threads_cleanup.h"
 #include "proc_threads_cancel.h"
 
-void reset_thread_switch_state(void);
-void thread_switch_timeout_handler(PROC *p, long arg);
+static void reset_thread_switch_state(void);
+static void thread_switch_timeout_handler(PROC *p, long arg);
 
 /* Thread scheduling helper functions */
-static int should_schedule_thread(struct thread *current, struct thread *next);
+static inline short should_schedule_thread(struct thread *current, struct thread *next);
 // static void thread_switch(struct thread *from, struct thread *to);
 
 /* Thread exit helper functions */
 static void cancel_thread_timeouts(struct proc *p, struct thread *t);
 static struct thread *find_next_thread_to_run(struct proc *p);
 
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+static inline short fix_orphaned_thread(struct thread *t, struct proc *p);
+static void check_orphaned_threads(struct proc *p);
+#endif
+
 /* Mutex for timer operations */
-static int timer_operation_locked = 0;
-static int thread_switch_in_progress = 0;
+static short timer_operation_locked = 0;
+static short thread_switch_in_progress = 0;
 static TIMEOUT *thread_switch_timeout = NULL;
 
 /* Structure to encapsulate thread switch context and reduce parameter passing */
 struct thread_switch_context {
-    struct thread *from;
-    struct thread *to;
+    struct thread *from, *to;
     struct proc *process;
-    unsigned long switch_time;
     CONTEXT *to_ctx;
-    int should_reset_boost;
+    unsigned long switch_time;
+    unsigned char should_reset_boost : 1; // 1-bit boolean
 };
 
 /* Structure to prepare scheduling decisions outside critical sections */
 struct scheduling_decision {
-    struct thread *current_thread;
-    struct thread *next_thread;
-    int should_switch;
+    struct thread *current_thread, *next_thread;
     unsigned long decision_time;
+    unsigned char should_switch : 1; // 1-bit boolean
 };
+
 
 /* Forward declarations for new functions */
 static void prepare_thread_switch(struct thread_switch_context *ctx);
@@ -143,66 +147,13 @@ void thread_preempt_handler(PROC *p, long arg) {
         }
     }
 
-    struct thread *next = get_highest_priority_thread(p);
-    
-    if (!next) {
-        TRACE_THREAD("PREEMPT: No other threads to run, continuing with current thread %d", curr_thread->tid);
-        
-        // If there are sleeping threads, create an idle thread
-        if (p->sleep_queue) {
-            next = get_idle_thread(p);
-            if (next) {
-                TRACE_THREAD("PREEMPT: Created idle thread to wait for sleeping threads");
-                remove_from_ready_queue(next);
-                atomic_thread_state_change(next, THREAD_STATE_RUNNING);
-                p->current_thread = next;
-                // next->last_scheduled = get_system_ticks();
-                
-                // Rearm timer before switch
-                reschedule_preemption_timer(p, (long)next);
-                
-                TRACE_THREAD("PREEMPT: Switching from thread %d to idle thread", curr_thread->tid);
-                thread_switch(curr_thread, next);
-                
-                spl(sr);
-                return;
-            }
-        }
-        
-        reschedule_preemption_timer(p, (long)curr_thread);
-        spl(sr);
-        return;
-    }
-    
-    // Check if we should preempt current thread
-    if (should_schedule_thread(curr_thread, next)) {
-        // Don't preempt if thread switch already in progress
-        if (thread_switch_in_progress) {
-            TRACE_THREAD("PREEMPT: Thread switch already in progress");
-            reschedule_preemption_timer(p, (long)curr_thread);
-            spl(sr);
-            return;
-        }
-        
-        // Perform the switch
-        remove_from_ready_queue(next);
-        atomic_thread_state_change(next, THREAD_STATE_RUNNING);
-        p->current_thread = next;
-        // next->last_scheduled = get_system_ticks();
-        
-        // Rearm timer before switch
-        reschedule_preemption_timer(p, (long)next);
-        
-        TRACE_THREAD("PREEMPT: Switching from thread %d to thread %d", curr_thread->tid, next->tid);
-        thread_switch(curr_thread, next);
-        
-        spl(sr);
-        return;
-    }
-    
+    spl(sr);
+
+    proc_thread_schedule();
+    TRACE_THREAD("PREEMPT: No switch needed, rescheduling current thread %d", curr_thread->tid);
     // No switch needed, reschedule timer
     reschedule_preemption_timer(p, (long)curr_thread);
-    spl(sr);
+    
 }
 
 /**
@@ -214,10 +165,9 @@ void thread_preempt_handler(PROC *p, long arg) {
  */
 void proc_thread_schedule(void) {
     struct proc *p = get_curproc();
-    register unsigned short sr;
     
-    if (!p) {
-        TRACE_THREAD("SCHED: Invalid current process");
+    if (!p->threads) {
+        TRACE_THREAD("SCHED: Invalid current process, no threads to schedule");
         return;
     }
 
@@ -228,17 +178,14 @@ void proc_thread_schedule(void) {
     
     // Prepare the scheduling decision outside critical section
     if (!prepare_scheduling_decision(p, &decision)) {
-        // No switch needed
+        TRACE_THREAD("SCHED: No scheduling decision made, returning");
         return;
     }
     
-    // Enter critical section for the actual switch
-    sr = splhigh();
-    
     // Execute the scheduling decision in minimal critical section
     execute_scheduling_decision(p, &decision);
-    
-    spl(sr);
+    TRACE_THREAD("SCHED: Should not reach here, scheduling decision executed");
+    return;
 }
 
 /**
@@ -461,14 +408,19 @@ void cleanup_thread_resources(struct proc *p, struct thread *t, int tid) {
  * @param retval The return value of the exiting thread
  */
 void proc_thread_exit(void *retval, void *arg) {
+
     struct proc *p = curproc;
+    
     if (!p) {
         TRACE_THREAD("EXIT ERROR: No current process");
         return;
     }
+
     struct thread *current = NULL;
+
     if(!arg) {
         current = p->current_thread;
+        TRACE_THREAD("EXIT: Thread %d is exiting (EXIT THREAD)", current->tid);
     } else {
         current = (struct thread *)arg;
         TRACE_THREAD("EXIT: Thread %d is exiting (CANCEL THREAD)", current->tid);
@@ -479,6 +431,47 @@ void proc_thread_exit(void *retval, void *arg) {
         return;
     }
 
+    static int thread_exit_in_progress = 0;
+    static int exit_owner_tid = -1;
+
+    int tid = current->tid;
+    TRACE_THREAD("EXIT: Thread %d is exiting with retval=%p", tid, retval);
+    register unsigned short sr = splhigh();
+
+    // Protection against reentrance
+    if (thread_exit_in_progress && exit_owner_tid != current->tid) {
+        spl(sr);
+        TRACE_THREAD("EXIT: Thread exit already in progress by thread %d, waiting", exit_owner_tid);
+        proc_thread_exit(retval, NULL); // Pass retval to recursive call
+        return;
+    }
+
+    // Check if the thread is already exited or freed
+    if (current->magic != CTXT_MAGIC || (current->state & THREAD_STATE_EXITED)) {
+        TRACE_THREAD("WARNING: proc_thread_exit: Thread %d already exited or freed (magic=%lx, state=%d)",
+                    tid, current->magic, current->state);
+        spl(sr);
+        return;
+    }
+    
+    if (current->tid == 0) {
+        if (p->num_threads > 1) {
+            TRACE_THREAD("EXIT: Preventing thread0 exit while other threads exist (num_threads=%d)", 
+                        p->num_threads);
+            spl(sr);
+            return;
+        }
+        TRACE_THREAD("EXIT: Allowing thread0 to exit - no other threads remain");
+    }
+
+    thread_exit_in_progress = 1;
+    exit_owner_tid = tid;
+    TRACE_THREAD("EXIT: Thread %d is beginning exit process", tid);
+
+    // Cancel timeouts associated with this thread
+    TRACE_THREAD("EXIT: Cancelling timeouts for thread %d", tid);
+    cancel_thread_timeouts(p, current);
+
     // Check for pending signals before exiting
     if (current->t_sigpending) {
         int sig = check_thread_signals(current);
@@ -488,72 +481,26 @@ void proc_thread_exit(void *retval, void *arg) {
             handle_thread_signal(current, sig);
         }
     }
-    if (current->magic == CTXT_MAGIC) {
-        TRACE_THREAD("EXIT: Running cleanup handlers for thread %d", current->tid);
-        run_cleanup_handlers(current);  // Execute all cleanup handlers automatically
-        TRACE_THREAD("EXIT: Running tsd destructors for thread %d", current->tid);
-        run_tsd_destructors(current);  // User-space destructor handler
-    }
 
-    static int thread_exit_in_progress = 0;
-    static int exit_owner_tid = -1;
-    register unsigned short sr = splhigh();
-    
-    // Protection against reentrance
-    if (thread_exit_in_progress && exit_owner_tid != current->tid) {
-        spl(sr);
-        TRACE_THREAD("EXIT: Thread exit already in progress by thread %d, waiting", exit_owner_tid);
-        proc_thread_exit(retval, NULL); // Pass retval to recursive call
-        return;
-    }
-    
-    int tid = current->tid;
-    thread_exit_in_progress = 1;
-    exit_owner_tid = tid;
-    
-    if (retval == PTHREAD_CANCELED) {
-        TRACE_THREAD("EXIT: Thread %d canceled", current->tid);
-    }
+    TRACE_THREAD("EXIT: Running cleanup handlers for thread %d", current->tid);
+    run_cleanup_handlers(current);  // Execute all cleanup handlers automatically
+    TRACE_THREAD("EXIT: Running tsd destructors for thread %d", current->tid);
+    run_tsd_destructors(current);  // User-space destructor handler
+
     // Store the return value in the thread structure
     current->retval = retval;
-    
-    TRACE_THREAD("EXIT: Thread %d beginning exit process", tid);
-    
+
     // Handle thread joining
+    TRACE_THREAD("EXIT: Handling thread joining for thread %d", current->tid);
     handle_thread_joining(current, retval);
-    
-    // Special handling for thread0 - wait for other threads to complete
-    if (current->tid == 0 && p->num_threads > 1) {
-        TRACE_THREAD("thread0 waiting for other threads to exit before exiting");
-        // Wait until all other threads have exited
-        while (p->num_threads > 1) {
-            // Yield to other threads
-            atomic_thread_state_change(current, THREAD_STATE_READY);
-            add_to_ready_queue(current);
-            proc_thread_schedule();
-            spl(sr);
-        }
-        TRACE_THREAD("All other threads have exited, thread0 can now exit");
-    }
-    
-    // Check if the thread is already exited or freed
-    if (current->magic != CTXT_MAGIC || (current->state & THREAD_STATE_EXITED)) {
-        TRACE_THREAD("WARNING: proc_thread_exit: Thread %d already exited or freed (magic=%lx, state=%d)",
-                    tid, current->magic, current->state);
-        thread_exit_in_progress = 0;
-        exit_owner_tid = -1;
-        spl(sr);
-        return;
-    }
-    
-    // Cancel timeouts associated with this thread
-    cancel_thread_timeouts(p, current);
 
     // Remove from all queues
+    TRACE_THREAD("EXIT: Removing thread %d from wait queues and ready queue", current->tid);
     remove_thread_from_wait_queues(current);
     remove_from_ready_queue(current);
     
     // Mark thread as exited
+    TRACE_THREAD("EXIT: Marking thread %d as exited", current->tid);
     atomic_thread_state_change(current, THREAD_STATE_EXITED);
 
     if(tid > 0) {
@@ -564,20 +511,30 @@ void proc_thread_exit(void *retval, void *arg) {
     
     // Handle timers
     if (p->num_threads == 1) {
-        TRACE_THREAD("Only one thread remaining, stopping all timers");
+        TRACE_THREAD("EXIT: Only one thread remaining, stopping all timers");
         if (thread_switch_timeout) {
+            TRACE_THREAD("EXIT: Cancelling thread switch timeout");
             canceltimeout(thread_switch_timeout);
             thread_switch_timeout = NULL;
         }
         if (p->p_thread_timer.enabled) {
+            TRACE_THREAD("EXIT: Stopping thread timer for process %d", p->pid);
             thread_timer_stop(p);
         }
     }
     
     // Find next thread to run
-    struct thread *next_thread = find_next_thread_to_run(p);
     CONTEXT *target_ctx = NULL;
-    if (next_thread)check_thread_cancellation(next_thread);
+    struct thread *next_thread = find_next_thread_to_run(p);
+    TRACE_THREAD("EXIT: Found next thread %d to run after exit", 
+                next_thread ? next_thread->tid : -1);
+
+    
+    if (next_thread){
+        // Check if the next thread is cancellable
+        TRACE_THREAD("EXIT: Checking if next thread %d is cancellable", next_thread->tid);
+        check_thread_cancellation(next_thread);
+    }
     // If we found a valid next thread, prepare to switch to it
     if (next_thread && next_thread->magic == CTXT_MAGIC && !(next_thread->state & THREAD_STATE_EXITED)) {
         TRACE_THREAD("EXIT: Will switch to thread %d", next_thread->tid);
@@ -588,18 +545,36 @@ void proc_thread_exit(void *retval, void *arg) {
         if (!target_ctx) {
             TRACE_THREAD("EXIT ERROR: Could not get context for thread %d", next_thread->tid);
             next_thread = NULL;
-            p->current_thread = NULL;
         }
     }
-    
+
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+    if (!target_ctx) {
+        TRACE_THREAD("EXIT: Checking for orphaned threads");
+        check_orphaned_threads(p);
+        // Try to find an orphaned thread to run
+        TRACE_THREAD("EXIT: Finding next thread to run after checking for orphans");
+        next_thread = find_next_thread_to_run(p);
+
+        if (next_thread && next_thread->magic == CTXT_MAGIC && 
+            !(next_thread->state & THREAD_STATE_EXITED)) {
+            TRACE_THREAD("EXIT: Found orphaned thread %d to run", next_thread->tid);
+            atomic_thread_state_change(next_thread, THREAD_STATE_RUNNING);
+            p->current_thread = next_thread;
+            target_ctx = get_thread_context(next_thread);
+        }
+    }
+#endif
+
     // If no valid thread found, use process context
     if (!target_ctx) {
         TRACE_THREAD("EXIT: No next thread, returning to process context");
         target_ctx = &p->ctxt[CURRENT];
-        p->current_thread = NULL;
+        p->current_thread = get_main_thread(p);
     }
     
     // Clean up thread resources
+    TRACE_THREAD("EXIT: Cleaning up resources for exiting thread %d", tid);
     cleanup_thread_resources(p, current, tid);
     
     TRACE_THREAD("Thread %d exited", tid);
@@ -610,7 +585,7 @@ void proc_thread_exit(void *retval, void *arg) {
     // Switch to target context
     TRACE_THREAD("EXIT: Switching to target context, PC=%lx", target_ctx->pc);
     
-    // CRITICAL FIX: Do NOT save context when exiting!
+    // CRITICAL: Do NOT save context when exiting!
     // The exiting thread should never resume - just switch directly
     spl(sr);
     change_context(target_ctx);
@@ -634,7 +609,7 @@ void proc_thread_exit(void *retval, void *arg) {
  * @param next The candidate thread to be scheduled next
  * @return 1 if next should preempt current, 0 otherwise
  */
-static int should_schedule_thread(struct thread *current, struct thread *next) {
+static inline short should_schedule_thread(struct thread *current, struct thread *next) {
     if (!next) {
         TRACE_THREAD("THREAD_SCHED (should_schedule_thread): Invalid thread");
         return 0;
@@ -733,6 +708,7 @@ void thread_switch(struct thread *from, struct thread *to) {
         
         TRACE_THREAD("SWITCH: Switching to thread %d (no source thread)", to->tid);
         register unsigned short sr = splhigh();
+        reset_thread_priority(to);
         change_context(get_thread_context(to));
         spl(sr);
         return;
@@ -868,7 +844,7 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
         // Sleeping thread path - direct context switch
         atomic_thread_state_change(ctx->to, THREAD_STATE_RUNNING);
         ctx->from->proc->current_thread = ctx->to;
-        
+        reset_thread_priority(ctx->to);
         reset_thread_switch_state();
         TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
@@ -883,7 +859,9 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
         }
         atomic_thread_state_change(ctx->to, THREAD_STATE_RUNNING);
         ctx->from->proc->current_thread = ctx->to;
-        
+
+        reset_thread_priority(ctx->to);
+
         reset_thread_switch_state();
         TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
@@ -906,6 +884,16 @@ static int prepare_scheduling_decision(struct proc *p, struct scheduling_decisio
         check_and_wake_sleeping_threads(p);
     }
 
+    TRACE_THREAD("SCHED: Current thread state=%d wait_type=%d", 
+                 decision->current_thread->state, decision->current_thread->wait_type);
+    if (decision->current_thread->wait_type) {
+        TRACE_THREAD("SCHED: Thread %d is waiting on: %s", 
+                     decision->current_thread->tid,
+                     (decision->current_thread->wait_type & WAIT_MUTEX) ? "MUTEX" :
+                     (decision->current_thread->wait_type & WAIT_CONDVAR) ? "CONDVAR" :
+                     (decision->current_thread->wait_type & WAIT_JOIN) ? "JOIN" : "UNKNOWN");
+    }
+
     // Get highest priority thread from ready queue
     decision->next_thread = get_highest_priority_thread(p);
     
@@ -917,7 +905,17 @@ static int prepare_scheduling_decision(struct proc *p, struct scheduling_decisio
         remove_from_ready_queue(decision->next_thread);
         decision->next_thread = NULL;
     }
-    
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+    if (!decision->next_thread) {
+        TRACE_THREAD("SCHED: No valid next thread found in ready queue, checking for orphans");
+        // If no next thread found, check for orphaned threads
+        // This is necessary to ensure we don't miss runnable threads that are not in the ready queue
+        // Orphaned threads are those that are not in the ready queue but are runnable
+        check_orphaned_threads(p);
+        TRACE_THREAD("SCHED: After checking orphans, looking for next thread again");
+        decision->next_thread = get_highest_priority_thread(p);
+    }
+#endif
     // Handle case where no next thread is found
     if (!decision->next_thread) {
         // Try to find thread0 or create idle thread
@@ -969,13 +967,16 @@ static int prepare_scheduling_decision(struct proc *p, struct scheduling_decisio
 
 static void execute_scheduling_decision(struct proc *p, struct scheduling_decision *decision) {
     if (!decision->should_switch || !decision->next_thread) {
+        TRACE_THREAD("SCHED: No switch needed");
         return;
     }
     
     TRACE_THREAD("SCHED: Executing switch from %d to %d", 
                 decision->current_thread ? decision->current_thread->tid : -1, 
                 decision->next_thread->tid);
-    
+
+    // register unsigned short sr = splhigh();
+
     // Remove next from ready queue if it's there
     if (is_in_ready_queue(decision->next_thread)) {
         remove_from_ready_queue(decision->next_thread);
@@ -989,6 +990,7 @@ static void execute_scheduling_decision(struct proc *p, struct scheduling_decisi
         // Handle current thread based on its state
         if (decision->current_thread->state == THREAD_STATE_RUNNING) {
             if (decision->current_thread->wait_type != WAIT_NONE) {
+
                 atomic_thread_state_change(decision->current_thread, THREAD_STATE_BLOCKED);
                 
                 // Priority inheritance for mutexes
@@ -1020,9 +1022,19 @@ static void execute_scheduling_decision(struct proc *p, struct scheduling_decisi
     
     // Record scheduling time for timeslice accounting
     // decision->next_thread->last_scheduled = get_system_ticks();
-    
+
+    // Reschedule preemption timer if needed
+    if (p->p_thread_timer.in_handler) {
+        if (!p->p_thread_timer.enabled) {
+            TRACE_THREAD("SCHEDULER -> PREEMPT: Timer disabled, not rescheduling");
+        }
+        TRACE_THREAD("SCHEDULER -> PREEMPT: Already in handler, rescheduling");
+        reschedule_preemption_timer(p, (long)p->current_thread);
+    }
+
     // Use the original thread_switch function for now
     // This ensures compatibility until optimized_thread_switch is fully tested
+    // spl(sr);
     thread_switch(decision->current_thread, decision->next_thread);
 }
 
@@ -1057,7 +1069,7 @@ void reschedule_preemption_timer(PROC *p, long arg) {
  * Reset the thread switch state
  * Called when a thread switch completes or times out
  */
-void reset_thread_switch_state(void) {
+static void reset_thread_switch_state(void) {
 
     register unsigned short sr = splhigh();
     
@@ -1075,7 +1087,7 @@ void reset_thread_switch_state(void) {
  * Thread switch timeout handler
  * Called when a thread switch takes too long
  */
-void thread_switch_timeout_handler(PROC *p, long arg) {
+static void thread_switch_timeout_handler(PROC *p, long arg) {
 
     static int recovery_attempts = 0;
     
@@ -1232,3 +1244,132 @@ void thread_timer_stop(PROC *p)
     
     TRACE_THREAD("TIMER: Timer operation lock released");
 }
+
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+static inline short fix_orphaned_thread(struct thread *t, struct proc *p) {
+    if (!t || !p ) return 0;
+
+    if(!p->threads|| t->magic != CTXT_MAGIC || t->tid == 0) return 0;
+
+    register unsigned short sr = splhigh();
+    short fixed = 0;
+
+    // Cas 1: Thread en cours d'exécution mais pas dans la ready queue
+    if (t->state == THREAD_STATE_RUNNING && 
+        !is_in_ready_queue(t) &&
+        t->wait_type == WAIT_NONE) {
+        TRACE_THREAD("ORPHAN: Thread %d running but not in ready queue", t->tid);
+        atomic_thread_state_change(t, THREAD_STATE_READY);
+        add_to_ready_queue(t);
+        fixed = 1;
+    }
+
+    // Cas 2: Thread prêt mais pas dans la ready queue
+    else if (t->state == THREAD_STATE_READY && 
+             !is_in_ready_queue(t) &&
+             t->wait_type == WAIT_NONE) {
+        TRACE_THREAD("ORPHAN: Thread %d ready but not in ready queue", t->tid);
+        add_to_ready_queue(t);
+        fixed = 1;
+    }
+
+    // Cas 3: Thread bloqué avec état incohérent
+    else if (t->state == THREAD_STATE_BLOCKED) {
+        short orphaned = 0;
+        
+        // Vérifier chaque type d'attente
+        if (t->wait_type & WAIT_MUTEX) {
+            struct mutex *m = t->mutex_wait_obj;
+            if (!m || !m->wait_queue || !is_in_wait_queue(m->wait_queue, t)) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid mutex", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type & WAIT_SEMAPHORE) {
+            struct semaphore *sem = t->sem_wait_obj;
+            if (!sem || !sem->wait_queue || !is_in_wait_queue(sem->wait_queue, t)) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid semaphore", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type & WAIT_CONDVAR) {
+            struct condvar *cond = t->cond_wait_obj;
+            if (!cond || !cond->wait_queue || !is_in_wait_queue(cond->wait_queue, t)) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid condvar", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type & WAIT_SIGNAL) {
+            if (!is_in_signal_wait_queue(p, t)) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid signal wait", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type & WAIT_JOIN) {
+            struct thread *target = t->join_wait_obj;
+            if (!target || target->magic != CTXT_MAGIC || target->joiner != t) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid join target", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type & WAIT_SLEEP) {
+            if (!is_in_sleep_queue(p, t)) {
+                TRACE_THREAD("ORPHAN: Thread %d blocked on invalid sleep", t->tid);
+                orphaned = 1;
+            }
+        }
+        else if (t->wait_type != WAIT_NONE) {
+            TRACE_THREAD("ORPHAN: Thread %d blocked with unknown wait type %d", 
+                        t->tid, t->wait_type);
+            orphaned = 1;
+        }
+        
+        if (orphaned) {
+            remove_thread_from_specific_wait_queue(t, t->wait_type);
+            t->wait_type = WAIT_NONE;
+            atomic_thread_state_change(t, THREAD_STATE_READY);
+            add_to_ready_queue(t);
+            fixed = 1;
+        }
+    }
+
+    // Cas 4: Thread dans une queue mais avec mauvais état
+    if (!fixed) {
+        if (is_in_ready_queue(t) && t->state != THREAD_STATE_READY) {
+            TRACE_THREAD("ORPHAN: Thread %d in ready queue but state %d", 
+                        t->tid, t->state);
+            atomic_thread_state_change(t, THREAD_STATE_READY);
+            fixed = 1;
+        }
+        else if (is_in_sleep_queue(p, t) && !(t->wait_type & WAIT_SLEEP)) {
+            TRACE_THREAD("ORPHAN: Thread %d in sleep queue but not sleeping", t->tid);
+            remove_from_sleep_queue(p, t);
+            fixed = 1;
+        }
+    }
+
+    spl(sr);
+    return fixed;
+}
+
+static void check_orphaned_threads(struct proc *p) {
+    if (!p) return;
+
+    struct thread *t;
+    int orphans_found = 0;
+
+    TRACE_THREAD("ORPHAN CHECK: Scanning threads for process %d", p->pid);
+    for (t = p->threads; t != NULL; t = t->next) {
+        if (fix_orphaned_thread(t, p)) {
+            TRACE_THREAD("ORPHAN CHECK: Fixed orphaned thread %d, state %d, wait type %d", t->tid, 
+                        t->state, t->wait_type);
+            orphans_found++;
+        }
+    }
+
+    if (orphans_found) {
+        TRACE_THREAD("ORPHAN CHECK: Found and fixed %d orphaned threads", 
+                    orphans_found);
+    }
+}
+#endif // THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL

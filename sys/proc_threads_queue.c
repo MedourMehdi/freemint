@@ -28,11 +28,16 @@ void add_to_ready_queue(struct thread *t) {
     struct proc *p;
     register unsigned short sr;
     
-    if (!t || !t->proc || (t->state & THREAD_STATE_RUNNING) || (t->state & THREAD_STATE_EXITED))
+    if (!t || !t->proc || (t->state & THREAD_STATE_RUNNING) || (t->state & THREAD_STATE_EXITED)) {
+        TRACE_THREAD("READY_Q: Invalid thread %d state=%d, not adding to ready queue", 
+                     t ? t->tid : -1, t ? t->state : -1);
         return;
+    }
         
-    if (t->tid == 0 && (t->state & THREAD_STATE_EXITED))
+    if (t->tid == 0 && (t->state & THREAD_STATE_EXITED)) {
+        TRACE_THREAD("READY_Q: Thread 0 is EXITED, not adding to ready queue");
         return;
+    }
         
     p = t->proc;
     sr = splhigh();
@@ -136,6 +141,8 @@ void add_to_ready_queue(struct thread *t) {
 }
 
 void remove_from_ready_queue(struct thread *t) {
+    TRACE_THREAD("READY_Q: Attempting to remove thread %d from ready queue", t->tid);
+    TRACE_THREAD("READY_Q: Thread state=%d wait_type=%d", t->state, t->wait_type);
     if (!t || !t->proc) return;
     struct proc *p = t->proc;
     register unsigned short sr = splhigh();
@@ -302,17 +309,58 @@ void remove_thread_from_specific_wait_queue(struct thread *t, int wait_type_mask
 }
 
 int is_in_ready_queue(struct thread *t) {
+    TRACE_THREAD("Checking if thread %d is in ready queue", t->tid);
     if (!t || !t->proc)
         return 0;
 
     struct thread *cur = t->proc->ready_queue;
     while (cur) {
-        if (cur == t)
+        if (cur == t){
+            TRACE_THREAD("READY_Q: Thread %d found in ready queue", t->tid);
             return 1;
+        }
         cur = cur->next_ready;
+    }
+    TRACE_THREAD("READY_Q: Thread %d not found in ready queue", t->tid);
+    return 0;
+}
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+int is_in_wait_queue(struct thread *head, struct thread *t) {
+    while (head) {
+        if (head == t) return 1;
+        head = head->next_wait;
     }
     return 0;
 }
+
+int is_in_signal_wait_queue(struct proc *p, struct thread *t) {
+    struct thread *curr = p->signal_wait_queue;
+    while (curr) {
+        if (curr == t) return 1;
+        curr = curr->next_sigwait;
+    }
+    return 0;
+}
+
+/**
+ * Check if a thread is in the sleep queue
+ */
+int is_in_sleep_queue(struct proc *p, struct thread *t) {
+    if (!p || !t) return 0;
+    
+    struct thread *curr = p->sleep_queue;
+    while (curr) {
+        if (curr == t) {
+            TRACE_THREAD("SLEEP_Q: Thread %d found in sleep queue", t->tid);
+            return 1;
+        }
+        curr = curr->next_sleeping;
+    }
+    
+    TRACE_THREAD("SLEEP_Q: Thread %d not found in sleep queue", t->tid);
+    return 0;
+}
+#endif // THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
 
 /**
  * Find the highest priority thread in a wait queue using bitmap optimization

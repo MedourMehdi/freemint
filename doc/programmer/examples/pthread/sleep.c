@@ -40,10 +40,10 @@ void *thread1_func(void *arg) {
         delta_ms = (wake_time.tv_sec - sleep_time.tv_sec) * 1000 + 
                   (wake_time.tv_usec - sleep_time.tv_usec) / 1000;
         
-        printf("Thread %ld: Woke up after %ld ms\n", my_tid, delta_ms);
+        printf("--> Thread %ld: Woke up after %ld ms\n", my_tid, delta_ms);
     }
     
-    printf("Thread 1: FINISHED\n");
+    printf("--> Thread 1: FINISHED\n");
     thread1_done = 1;
     
     return NULL;  // Must return a value
@@ -62,7 +62,7 @@ void *thread2_func(void *arg) {
     }
     
     thread2_done = 1;
-    printf("Thread %ld: FINISHED\n", my_tid);
+    printf("--> Thread %ld: FINISHED\n", my_tid);
     
     return NULL;  // Must return a value
 }

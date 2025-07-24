@@ -13,6 +13,7 @@
 
 #include "proc_threads.h"
 #include "proc_threads_mutex.h"
+#include "proc_threads_cond.h"
 
 #ifndef PROC_THREADS_SYNC_H
 #define PROC_THREADS_SYNC_H
@@ -25,16 +26,6 @@ struct semaphore {
     /* Non threaded values */
     volatile short io_count;        /* Reference count for named sems */
     char sem_id[SEM_NAME_MAX + 1];  /* Fixed array instead of pointer */
-};
-
-#define CONDVAR_MAGIC 0xC0DEC0DE
-
-struct condvar {
-    struct thread *wait_queue;      /* Queue of threads waiting on this condvar */
-    struct mutex *associated_mutex; /* Mutex associated with this condvar */
-    unsigned long magic;            /* Magic number for validation */
-    int destroyed;                  /* Flag indicating if condvar is destroyed */
-    long timeout_ms;                /* Timeout value in milliseconds */
 };
 
 /* Read-Write Lock Structure */
@@ -70,12 +61,5 @@ long thread_rwlock_wrlock(long handle);
 long thread_rwlock_trywrlock(long handle);
 long thread_rwlock_unlock(long handle);
 
-/* Condition variable functions */
-int proc_thread_condvar_init(struct condvar *cond);
-int proc_thread_condvar_destroy(struct condvar *cond);
-int proc_thread_condvar_wait(struct condvar *cond, struct mutex *mutex);
-int proc_thread_condvar_timedwait(struct condvar *cond, struct mutex *mutex, long timeout_ms);
-int proc_thread_condvar_signal(struct condvar *cond);
-int proc_thread_condvar_broadcast(struct condvar *cond);
 
 #endif /* PROC_THREADS_SYNC_H */

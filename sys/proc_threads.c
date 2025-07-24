@@ -94,6 +94,7 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     
     struct thread *t = kmalloc(sizeof(struct thread));
     if (!t) {
+        spl(sr);
         return ENOMEM;
     }
     TRACE_THREAD("KMALLOC: Allocated thread structure at %p", t);
@@ -151,8 +152,9 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
 
     t->stack = kmalloc(stack_size);
     if (!t->stack) {
-		p->num_threads--;  // Revert the thread count increment
+        p->num_threads--;  // Revert the thread count increment
         TRACE_THREAD("KFREE: Stack allocation failed");
+        t->magic = 0;      // Clear magic before freeing
         kfree(t);
         spl(sr);
         return ENOMEM;
@@ -200,14 +202,17 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     init_thread_context(t, func, arg);
     
     atomic_thread_state_change(t, THREAD_STATE_READY);
-    add_to_ready_queue(t);
 
     if(!p->p_thread_timer.enabled){
         thread_timer_start(t->proc, t->tid);
     }
 
-    TRACE_THREAD_CREATE(t, t->func, t->arg);
+    add_to_ready_queue(t);
+
     spl(sr);
+
+    TRACE_THREAD_CREATE(t, t->func, t->arg);
+    
     return t->tid;
 }
 
@@ -332,8 +337,12 @@ static void init_main_thread_context(struct proc *p) {
     t0->proc = p;
     strncpy(t0->name, p->name, 15);
     t0->name[15] = '\0'; // Ensure null termination
-    t0->priority = 1;
-    t0->original_priority = 1;
+    t0->priority = MIN_THREAD_PRIORITY;  // Use minimum thread priority
+    t0->original_priority = t0->priority;
+
+    t0->policy = DEFAULT_SCHED_POLICY;
+    t0->timeslice = p->thread_default_timeslice;
+    t0->remaining_timeslice = p->thread_default_timeslice;
 
     // Use process stack for thread0
     t0->stack = p->stack;
@@ -524,10 +533,10 @@ static void *idle_thread_func(void *arg) {
         /* This make the PREEMPT Timer function to never fire! 
         * Need to be fixed.
         */
-        // yield(); 
+        yield(); 
         // sys_f_select (1L, 0L, 0L, 0L);
 
-        asm volatile("nop");
+        // asm volatile("nop");
         
         proc_thread_schedule();
     }
@@ -551,8 +560,8 @@ static struct thread* create_idle_thread(struct proc *p) {
     idle->proc = p;
     strncpy(idle->name, "idle", 15);
     idle->name[15] = '\0';
-    idle->priority = 0;  // Lowest possible priority
-    idle->original_priority = 0;
+    idle->priority = MIN_THREAD_PRIORITY - 1;  // Lowest possible priority
+    idle->original_priority = idle->priority;
     idle->is_idle = 1;      // Mark as idle thread
     idle->magic = CTXT_MAGIC;
 

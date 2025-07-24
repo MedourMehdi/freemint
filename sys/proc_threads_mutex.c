@@ -87,15 +87,21 @@ int thread_mutex_init(struct mutex *mutex, const struct mutex_attr *attr) {
 
 int thread_mutex_lock(struct mutex *mutex) {
     if (!mutex) {
+        TRACE_THREAD("THREAD_MUTEX_LOCK: mutex is NULL");
         return EINVAL;
     }
 
     struct thread *t = CURTHREAD;
     if (!t) {
+        TRACE_THREAD("THREAD_MUTEX_LOCK: current thread is NULL");
         return EINVAL;
     }
 
     register unsigned short sr = splhigh();
+
+    TRACE_THREAD("MUTEX: Thread %d attempting to lock mutex %p (owner=%d)", 
+                 t->tid, mutex, 
+                 mutex->owner ? mutex->owner->tid : -1);
 
     /* Check if mutex is free */
     if (mutex->locked == 0) {
@@ -105,7 +111,7 @@ int thread_mutex_lock(struct mutex *mutex) {
             
         /* Apply priority ceiling if needed */
         handle_priority_ceiling(mutex, t, 1);
-
+        TRACE_THREAD("MUTEX LOCK: Thread %d acquired mutex %p", t->tid, mutex);
         spl(sr);
         return THREAD_SUCCESS;
     }

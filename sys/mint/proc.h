@@ -117,8 +117,8 @@ struct thread {
     /* Thread join fields */
     void *retval;                /* Return value from proc_thread_exit */
     struct thread *joiner;       /* Thread that is joining this thread */
-    int detached;                /* Whether thread is detached */
-    int joined;                  /* Whether thread has been joined */
+    short detached;                /* Whether thread is detached */
+    short joined;                  /* Whether thread has been joined */
     void **join_retval;          /* Where to store return value for joiner */
     
     /* Thread-specific data */

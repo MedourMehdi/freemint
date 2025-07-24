@@ -118,6 +118,7 @@ void reset_thread_priority(struct thread *t) {
  */
 struct thread *get_highest_priority_thread(struct proc *p) {
     if (!p || !p->ready_queue) {
+        TRACE_THREAD("get_highest_priority_thread: No ready threads in process %d", p ? p->pid : -1);
         return NULL;
     }
 
@@ -126,6 +127,7 @@ struct thread *get_highest_priority_thread(struct proc *p) {
     unsigned short normal_bitmap = 0;
     
     // Build bitmaps from ready queue
+    TRACE_THREAD("get_highest_priority_thread: Scanning ready queue for process %d", p->pid);
     struct thread *t = p->ready_queue;
     while (t) {
         if (t->magic == CTXT_MAGIC && !(t->state & THREAD_STATE_EXITED)) {

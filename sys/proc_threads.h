@@ -121,6 +121,7 @@
 #define THREAD_SUCCESS              0   /* Operation successful */
 #define MS_PER_TICK                 5   /* Milliseconds per system tick (200Hz) */
 #define MAX_SWITCH_RETRIES          3   /* Maximum context switch retry attempts */
+
 /* 
  * Thread priority scaling:
  * - User-facing API accepts priorities in the standard POSIX range (0-99)
@@ -128,9 +129,15 @@
  * - This allows efficient bitmap operations while maintaining POSIX compatibility
  * - Scaling uses fast multiply-shift: (priority * 10923) >> 16 ≈ (priority * 16) / 99
  */
+
 #define MAX_POSIX_THREAD_PRIORITY  99   /* Maximum POSIX thread priority */
+#define MIN_POSIX_THREAD_PRIORITY   1   /* Minimum POSIX thread priority */
+
 #define MAX_THREAD_PRIORITY        16   /* Internal maximum thread priority */
+#define MIN_THREAD_PRIORITY         0   /* Internal minimum thread priority */
+
 #define THREAD_CREATION_PRIORITY_BOOST 3   /* Priority boost for new threads */
+
 #define DEFAULT_SCHED_POLICY   SCHED_FIFO   /* Default scheduling policy */
 
 /* Current thread macro */
