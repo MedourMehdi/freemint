@@ -269,9 +269,6 @@ static int deliver_signal_to_thread(struct proc *p, struct thread *t, int sig) {
 /*
  * Modified version of raise() that's thread-aware
  */
-/*
- * Modified version of raise() that's thread-aware
- */
 int proc_thread_signal_aware_raise(struct proc *p, int sig)
 {
     if (!p || sig <= 0 || sig >= NSIG)
@@ -334,9 +331,10 @@ int proc_thread_signal_aware_raise(struct proc *p, int sig)
     
     /* Find thread0 to handle process signals */
     struct thread *thread0 = NULL;
-    for (struct thread *t = p->threads; t != NULL; t = t->next) {
-        if (t->tid == 0) {
-            thread0 = t;
+    struct thread *tmp = NULL;
+    for (tmp = p->threads; tmp != NULL; tmp = tmp->next) {
+        if (tmp->tid == 0) {
+            thread0 = tmp;
             break;
         }
     }

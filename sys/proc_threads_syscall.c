@@ -242,7 +242,8 @@ long _cdecl sys_p_thread_ctrl(long func, long arg1, long arg2) {
 
             // Find target thread
             register unsigned short sr = splhigh();
-            for (struct thread *t = p->threads; t != NULL; t = t->next) {
+            struct thread *t = NULL;
+            for (t = p->threads; t != NULL; t = t->next) {
                 if (t->tid == target_tid && t->magic == CTXT_MAGIC && 
                     !(t->state & THREAD_STATE_EXITED)) {
                     target = t;

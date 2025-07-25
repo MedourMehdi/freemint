@@ -96,7 +96,9 @@ long proc_thread_join(long tid, void **retval)
     struct proc *p = curproc;
     struct thread *current, *target = NULL;
     register unsigned short sr;
-    
+    struct thread *t = NULL;
+    int target_found = 0;
+
     if (!p || !p->current_thread)
         return EINVAL;
     
@@ -109,12 +111,12 @@ long proc_thread_join(long tid, void **retval)
         TRACE_THREAD("JOIN: Cannot join self (would deadlock)");
         return EDEADLK;
     }
-
-    for (struct thread *t = p->threads; t; t = t->next) {
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+    for (t = p->threads; t; t = t->next) {
         TRACE_THREAD("  Thread %d: state=%d, magic=%lx, detached=%d, joined=%d",
                     t->tid, t->state, t->magic, t->detached, t->joined);
     }
-
+#endif
     // Find target thread
     for (target = p->threads; target; target = target->next) {
         if (target->tid == tid){
@@ -228,8 +230,7 @@ TRACE_THREAD("JOIN: Thread %d waiting for thread %d to exit, join_retval=%p",
     }
 
     // CRITICAL FIX: Make sure target thread still exists and is valid
-    int target_found = 0;
-    for (struct thread *t = p->threads; t; t = t->next) {
+    for (t = p->threads; t; t = t->next) {
         if (t == target) {
             target_found = 1;
             break;

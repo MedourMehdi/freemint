@@ -64,6 +64,7 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
 
     pthread_attr_t *attr = (pthread_attr_t *)attr_ptr;
     
+    unsigned short i;
     // Extract attributes if provided
     if (attr) {
         if (attr->stacksize > 0) {
@@ -145,7 +146,7 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     t->alarm_timeout = NULL;
     t->sig_stack = NULL;
     t->old_sigmask = 0;
-    for (int i = 0; i < NSIG; i++) {
+    for (i = 0; i < NSIG; i++) {
         t->sig_handlers[i].handler = NULL;
         t->sig_handlers[i].arg = NULL;
     }
@@ -326,6 +327,7 @@ static void init_main_thread_context(struct proc *p) {
     if (p->current_thread) return; // Already initialized
     
     struct thread *t0 = kmalloc(sizeof(struct thread));
+    unsigned short i;
 
     if (!t0) return;
     TRACE_THREAD("KMALLOC: Allocated thread0 structure at %p for process %d", t0, p->pid);
@@ -362,7 +364,7 @@ static void init_main_thread_context(struct proc *p) {
 
     t0->magic = CTXT_MAGIC;
 
-    for (int i = 0; i < NSIG; i++) {
+    for (i = 0; i < NSIG; i++) {
         t0->sig_handlers[i].handler = NULL;
         t0->sig_handlers[i].arg = NULL;
     }
@@ -550,6 +552,7 @@ static void *idle_thread_func(void *arg) {
 static struct thread* create_idle_thread(struct proc *p) {
     // Create a new idle thread
     struct thread *idle = kmalloc(sizeof(struct thread));
+    unsigned short i;
     if (!idle) return NULL;
     
     // Initialize the idle thread
@@ -589,7 +592,7 @@ static struct thread* create_idle_thread(struct proc *p) {
     idle->alarm_timeout = NULL;
     idle->sig_stack = NULL;
     idle->old_sigmask = 0;
-    for (int i = 0; i < NSIG; i++) {
+    for (i = 0; i < NSIG; i++) {
         idle->sig_handlers[i].handler = NULL;
         idle->sig_handlers[i].arg = NULL;
     }
@@ -641,7 +644,8 @@ struct thread* get_idle_thread(struct proc *p) {
 
 struct thread* get_main_thread(struct proc *p) {
     struct thread *thread0 = NULL;
-    for (struct thread *t = p->threads; t != NULL; t = t->next) {
+    struct thread *t = NULL;
+    for (t = p->threads; t != NULL; t = t->next) {
         if (t->tid == 0 && t->magic == CTXT_MAGIC && !(t->state & THREAD_STATE_EXITED)) {
             thread0 = t;
             break;
