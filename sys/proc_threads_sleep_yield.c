@@ -46,9 +46,10 @@ int wake_threads_by_time(struct proc *p, unsigned long current_time) {
     
     unsigned short wakeable_bitmap = 0;
     int total_wakeable = 0;
-    
+    struct thread *t = NULL;
+
     // First pass: build bitmap of wakeable priorities
-    for (struct thread *t = p->sleep_queue; t; t = t->next_sleeping) {
+    for (t = p->sleep_queue; t; t = t->next_sleeping) {
         if (t->magic == CTXT_MAGIC &&
             (t->state & THREAD_STATE_BLOCKED) &&
             !(t->state & THREAD_STATE_EXITED) &&

@@ -824,10 +824,11 @@ void cleanup_thread_signals(struct thread *t)
         return;
     
     register unsigned short sr = splhigh();
-    
+    unsigned short i;
+
     /* Clean up any signal handlers registered by this thread */
     if (t->magic == CTXT_MAGIC) {
-        for (int i = 0; i < NSIG; i++) {
+        for (i = 0; i < NSIG; i++) {
             t->sig_handlers[i].handler = NULL;
             t->sig_handlers[i].arg = NULL;
         }
@@ -899,14 +900,15 @@ void init_thread_signals(struct proc *p)
 {
     if (!p || !p->p_sigacts)
         return;
-        
+    
+    unsigned short i;
     /* Initialize thread signal handling */
     p->p_sigacts->thread_signals = 0;
     
     struct thread *t;
     for (t = p->threads; t != NULL; t = t->next) {
         if (t->magic == CTXT_MAGIC) {
-            for (int i = 0; i < NSIG; i++) {
+            for (i = 0; i < NSIG; i++) {
                 t->sig_handlers[i].handler = NULL;
                 t->sig_handlers[i].arg = NULL;
             }
