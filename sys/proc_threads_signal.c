@@ -271,6 +271,9 @@ static int deliver_signal_to_thread(struct proc *p, struct thread *t, int sig) {
  */
 int proc_thread_signal_aware_raise(struct proc *p, int sig)
 {
+    struct thread *t = NULL;
+    struct thread *thread0 = NULL;
+    
     if (!p || sig <= 0 || sig >= NSIG)
         return EINVAL;
         
@@ -287,7 +290,7 @@ int proc_thread_signal_aware_raise(struct proc *p, int sig)
             }
             
             /* First pass: prioritize threads explicitly waiting for this signal in sigwait */
-            struct thread *t;
+            
             for (t = p->threads; t != NULL; t = t->next) {
                 /* Skip thread0 and current thread */
                 if (t->tid == 0 || t == p->current_thread)
@@ -330,11 +333,10 @@ int proc_thread_signal_aware_raise(struct proc *p, int sig)
     p->sigpending |= (1UL << sig);
     
     /* Find thread0 to handle process signals */
-    struct thread *thread0 = NULL;
-    struct thread *tmp = NULL;
-    for (tmp = p->threads; tmp != NULL; tmp = tmp->next) {
-        if (tmp->tid == 0) {
-            thread0 = tmp;
+
+    for (t = p->threads; t != NULL; t = t->next) {
+        if (t->tid == 0) {
+            thread0 = t;
             break;
         }
     }

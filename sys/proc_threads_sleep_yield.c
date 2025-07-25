@@ -76,7 +76,7 @@ int wake_threads_by_time(struct proc *p, unsigned long current_time) {
         // Wake all threads at this priority level
         struct thread **tp = &p->sleep_queue;
         while (*tp && woken < total_wakeable) {
-            struct thread *t = *tp;
+            t = *tp;
             // Check for cancellation before waking up
             if (t->cancel_pending && t->cancel_state == PTHREAD_CANCEL_ENABLE) {
                 check_thread_cancellation(t);
