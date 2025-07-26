@@ -304,7 +304,7 @@ long sys_p_thread_getid(void) {
     struct thread *t = CURTHREAD;
     
     if (!t){
-        TRACE_THREAD("sys_p_thread_getid: no current thread");
+        TRACE_THREAD("sys_p_thread_getid: Warning - get tid called and no current thread");
         return -1;
     }
     TRACE_THREAD("sys_p_thread_getid: pid=%d, tid=%d", t->proc->pid, t->tid);

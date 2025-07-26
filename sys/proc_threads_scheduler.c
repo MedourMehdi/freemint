@@ -57,7 +57,7 @@ struct thread_switch_context {
     struct proc *process;
     CONTEXT *to_ctx;
     unsigned long switch_time;
-    unsigned char should_reset_boost : 1; // 1-bit boolean
+    // unsigned char should_reset_boost : 1; // 1-bit boolean
 };
 
 /* Structure to prepare scheduling decisions outside critical sections */
@@ -147,13 +147,78 @@ void thread_preempt_handler(PROC *p, long arg) {
         }
     }
 
-    spl(sr);
+    struct thread *next = get_highest_priority_thread(p);
+    
+    if (!next) {
+        TRACE_THREAD("PREEMPT: No other threads to run, continuing with current thread %d", curr_thread->tid);
+        
+        // If there are sleeping threads, create an idle thread
+        if (p->sleep_queue) {
+            next = get_idle_thread(p);
+            if (next) {
+                TRACE_THREAD("PREEMPT: Created idle thread to wait for sleeping threads");
+                remove_from_ready_queue(next);
+                atomic_thread_state_change(next, THREAD_STATE_RUNNING);
+                p->current_thread = next;
+                // next->last_scheduled = get_system_ticks();
+                
+                // Rearm timer before switch
+                reschedule_preemption_timer(p, (long)next);
+                
+                TRACE_THREAD("PREEMPT: Switching from thread %d to idle thread", curr_thread->tid);
+                thread_switch(curr_thread, next);
+                
+                spl(sr);
+                return;
+            }
+        }
+        
+        reschedule_preemption_timer(p, (long)curr_thread);
+        spl(sr);
+        return;
+    }
+    
+    // Check if we should preempt current thread
+    if (should_schedule_thread(curr_thread, next)) {
+        // Don't preempt if thread switch already in progress
+        if (thread_switch_in_progress) {
+            TRACE_THREAD("PREEMPT: Thread switch already in progress");
+            reschedule_preemption_timer(p, (long)curr_thread);
+            spl(sr);
+            return;
+        }
+        
+        // Perform the switch
+        remove_from_ready_queue(next);
+        atomic_thread_state_change(next, THREAD_STATE_RUNNING);
+        p->current_thread = next;
+        // next->last_scheduled = get_system_ticks();
+        
+        // Rearm timer before switch
+        reschedule_preemption_timer(p, (long)next);
 
-    proc_thread_schedule();
-    TRACE_THREAD("PREEMPT: No switch needed, rescheduling current thread %d", curr_thread->tid);
+        if(curr_thread->wait_type == WAIT_NONE) {
+            atomic_thread_state_change(curr_thread, THREAD_STATE_READY);
+            add_to_ready_queue(curr_thread);        
+            TRACE_THREAD("PREEMPT: Switching from thread %d to thread %d", curr_thread->tid, next->tid);
+        }
+
+        thread_switch(curr_thread, next);
+        
+        spl(sr);
+        return;
+    }
+    
     // No switch needed, reschedule timer
     reschedule_preemption_timer(p, (long)curr_thread);
-    
+    spl(sr);
+
+    // spl(sr);
+
+    // proc_thread_schedule();
+    // TRACE_THREAD("PREEMPT: No switch needed, rescheduling current thread %d", curr_thread->tid);
+    // // No switch needed, reschedule timer
+    // reschedule_preemption_timer(p, (long)curr_thread);
 }
 
 /**
@@ -716,6 +781,7 @@ void thread_switch(struct thread *from, struct thread *to) {
     
     if (from == to) {
         TRACE_THREAD("SWITCH: Source and destination threads are the same");
+        reset_thread_priority(to);
         return;
     }
     
@@ -774,12 +840,12 @@ static void prepare_thread_switch(struct thread_switch_context *ctx) {
         return;
     }
     
-    // Calculate if priority boost should be reset
-    if (ctx->from->priority_boost && ctx->from->tid != 0) {
-        unsigned long elapsed = ctx->switch_time - ctx->from->last_scheduled;
-        ctx->should_reset_boost = (elapsed > ctx->from->proc->thread_min_timeslice || 
-                                  ctx->from->wait_type != WAIT_NONE);
-    }
+    // // Calculate if priority boost should be reset
+    // if (ctx->from->priority_boost && ctx->from->tid != 0) {
+    //     unsigned long elapsed = ctx->switch_time - ctx->from->last_scheduled;
+    //     ctx->should_reset_boost = (elapsed > ctx->from->proc->thread_min_timeslice || 
+    //                               ctx->from->wait_type != WAIT_NONE);
+    // }
 }
 
 /* Add this new function to execute thread switch in minimal critical section */
@@ -803,15 +869,15 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
     
     TRACE_THREAD("SWITCH: Switching threads: %d -> %d", ctx->from->tid, ctx->to->tid);
     
-    // Reset priority boost if needed
-    if (ctx->should_reset_boost) {
-        TRACE_THREAD("SWITCH: Resetting priority boost for thread %d (current pri: %d, original: %d)",
-                    ctx->from->tid, ctx->from->priority, ctx->from->original_priority);
-        reset_thread_priority(ctx->from);
-    } else if (ctx->from->priority_boost && ctx->from->tid != 0) {
-        TRACE_THREAD("SWITCH: Keeping priority boost for thread %d",
-                    ctx->from->tid);
-    }
+    // // Reset priority boost if needed
+    // if (ctx->should_reset_boost) {
+    //     TRACE_THREAD("SWITCH: Resetting priority boost for thread %d (current pri: %d, original: %d)",
+    //                 ctx->from->tid, ctx->from->priority, ctx->from->original_priority);
+    //     reset_thread_priority(ctx->from);
+    // } else if (ctx->from->priority_boost && ctx->from->tid != 0) {
+    //     TRACE_THREAD("SWITCH: Keeping priority boost for thread %d",
+    //                 ctx->from->tid);
+    // }
     // Update CPU time for outgoing thread
     now = get_system_ticks();
 
@@ -842,10 +908,13 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
     if ((ctx->from->wait_type & WAIT_SLEEP) || (ctx->from->wait_type & WAIT_JOIN)) {
         TRACE_THREAD("SWITCH: Thread %d is sleeping, joining or waiting on semaphore, skipping switch", ctx->from->tid);
         // Sleeping thread path - direct context switch
+
         atomic_thread_state_change(ctx->to, THREAD_STATE_RUNNING);
         ctx->from->proc->current_thread = ctx->to;
+
         reset_thread_priority(ctx->to);
         reset_thread_switch_state();
+
         TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
         
@@ -853,16 +922,19 @@ static void execute_thread_switch(struct thread_switch_context *ctx) {
     } 
     else if (save_context(get_thread_context(ctx->from)) == 0) {
         TRACE_THREAD("SWITCH: Saved context successfully for thread %d", ctx->from->tid);
+
         // Only change state if not blocked on mutex/semaphore
         if (ctx->from->wait_type == WAIT_NONE) {
             atomic_thread_state_change(ctx->from, THREAD_STATE_READY);
         }
+
         atomic_thread_state_change(ctx->to, THREAD_STATE_RUNNING);
+
         ctx->from->proc->current_thread = ctx->to;
 
         reset_thread_priority(ctx->to);
-
         reset_thread_switch_state();
+
         TRACE_THREAD("SWITCH: Switched to context for thread %d", ctx->to->tid);
         change_context(ctx->to_ctx);
         
@@ -1023,14 +1095,14 @@ static void execute_scheduling_decision(struct proc *p, struct scheduling_decisi
     // Record scheduling time for timeslice accounting
     // decision->next_thread->last_scheduled = get_system_ticks();
 
-    // Reschedule preemption timer if needed
-    if (p->p_thread_timer.in_handler) {
-        if (!p->p_thread_timer.enabled) {
-            TRACE_THREAD("SCHEDULER -> PREEMPT: Timer disabled, not rescheduling");
-        }
-        TRACE_THREAD("SCHEDULER -> PREEMPT: Already in handler, rescheduling");
-        reschedule_preemption_timer(p, (long)p->current_thread);
-    }
+    // // Reschedule preemption timer if needed
+    // if (p->p_thread_timer.in_handler) {
+    //     if (!p->p_thread_timer.enabled) {
+    //         TRACE_THREAD("SCHEDULER -> PREEMPT: Timer disabled, not rescheduling");
+    //     }
+    //     TRACE_THREAD("SCHEDULER -> PREEMPT: Already in handler, rescheduling");
+    //     reschedule_preemption_timer(p, (long)p->current_thread);
+    // }
 
     // Use the original thread_switch function for now
     // This ensures compatibility until optimized_thread_switch is fully tested
@@ -1060,6 +1132,8 @@ void reschedule_preemption_timer(PROC *p, long arg) {
     p->p_thread_timer.in_handler = 0;
     if (p->p_thread_timer.timeout) {
         p->p_thread_timer.timeout->arg = (long)t;
+        TRACE_THREAD("SCHED_TIMER: Rescheduled preemption timer for process %d, thread %d, interval %dms", 
+                    p->pid, t->tid, p->thread_preempt_interval);
     } else {
         TRACE_THREAD("SCHED_TIMER: Failed to reschedule preemption timer for process %d", p->pid);
     }

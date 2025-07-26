@@ -189,6 +189,8 @@ static long create_thread(struct proc *p, void *(*func)(void*), void *arg, void*
     t->detached = is_detached;  // Set detached state from attributes
     t->joined = 0;
 
+    t->errno = 0;  // No error initially
+
     t->cancel_state = PTHREAD_CANCEL_ENABLE;
     t->cancel_type = PTHREAD_CANCEL_DEFERRED;
     t->cancel_pending = 0;
@@ -384,6 +386,8 @@ static void init_main_thread_context(struct proc *p) {
     t0->detached = 0;  // Default is joinable
     t0->joined = 0;
 
+    t0->errno = 0;  // No error initially
+
     /* Use process TSD data for thread0 */
     t0->tsd_data = p->proc_tsd_data;
 
@@ -535,10 +539,10 @@ static void *idle_thread_func(void *arg) {
         /* This make the PREEMPT Timer function to never fire! 
         * Need to be fixed.
         */
-        yield(); 
+        // yield(); 
         // sys_f_select (1L, 0L, 0L, 0L);
 
-        // asm volatile("nop");
+        asm volatile("nop");
         
         proc_thread_schedule();
     }
@@ -609,6 +613,8 @@ static struct thread* create_idle_thread(struct proc *p) {
     idle->wait_type = WAIT_NONE;  // Not waiting for anything initially
     idle->sleep_reason = 0;  // No sleep reason initially
     
+    idle->errno = 0;  // No error initially
+
     // Initialize join-related fields
     idle->retval = NULL;
     idle->joiner = NULL;

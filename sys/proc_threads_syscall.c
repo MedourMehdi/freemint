@@ -285,6 +285,16 @@ long _cdecl sys_p_thread_ctrl(long func, long arg1, long arg2) {
             spl(sr);
             return 0;
         }
+
+        case THREAD_CTRL_GET_ERRNO_PTR: {
+            struct thread *t = CURTHREAD;
+            if (!t) {
+                TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid thread");
+                return EINVAL;
+            }
+            TRACE_THREAD("CTRL: sys_p_thread_ctrl called to get errno pointer for thread %d, pointer returned is %p, %lx", t->tid, t->errno, (long)&t->errno);
+            return (long)&t->errno;  // Return current thread's errno
+        }
         
         default:
             TRACE_THREAD("ERROR: sys_p_thread_ctrl called with invalid func %d", func);
@@ -698,6 +708,10 @@ long _cdecl sys_p_pthread(long syscall_func, long arg1, long arg2, long arg3) {
             
         case THREAD_ATOMIC_XOR:
             return !((volatile int *)arg1) ? EINVAL : atomic_xor((volatile int *)arg1, (int)arg2);
+
+        case THREAD_ATOMIC_TAS:
+        TRACE_THREAD("THREAD_ATOMIC_TAS: arg1=%p", (void *)arg1);
+            return !((volatile unsigned char *)arg1) ? EINVAL : tas_try_lock((volatile unsigned char *)arg1);
 
         default:
             TRACE_THREAD("P_THREAD_UNKNOWN: %ld", syscall_func);
