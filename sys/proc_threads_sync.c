@@ -111,7 +111,7 @@ long proc_thread_join(long tid, void **retval)
         TRACE_THREAD("JOIN: Cannot join self (would deadlock)");
         return EDEADLK;
     }
-#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_NORMAL
+#if THREAD_DEBUG_LEVEL >= THREAD_DEBUG_VERBOSE
     for (t = p->threads; t; t = t->next) {
         TRACE_THREAD("  Thread %d: state=%d, magic=%lx, detached=%d, joined=%d",
                     t->tid, t->state, t->magic, t->detached, t->joined);

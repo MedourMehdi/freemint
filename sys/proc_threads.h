@@ -138,8 +138,8 @@
 
 #define THREAD_CREATION_PRIORITY_BOOST 3   /* Priority boost for new threads */
 
-#define DEFAULT_SCHED_POLICY   SCHED_FIFO   /* Default scheduling policy */
-
+// #define DEFAULT_SCHED_POLICY   SCHED_FIFO   /* Default scheduling policy */
+#define DEFAULT_SCHED_POLICY   SCHED_OTHER   /* Default scheduling policy */
 /* Current thread macro */
 #define CURTHREAD \
     ((curproc && curproc->current_thread) ? curproc->current_thread : NULL)
